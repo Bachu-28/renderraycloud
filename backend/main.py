@@ -42,7 +42,7 @@ def do_upload_and_submit(tmp_dir, file_path, task_id):
         from rayvision_sync.upload import RayvisionUpload
         upload = RayvisionUpload(api)
         upload.upload_asset(upload_json, engine_type="aspera")
-        api.task.submit_task(task_id_list=[task_id])
+        api.task.submit_task([task_id])
         job_status[task_id] = "submitted"
     except Exception as e:
         job_status[task_id] = f"error:{str(e)}"
