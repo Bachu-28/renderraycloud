@@ -186,3 +186,25 @@ def stop_job(task_id: int):
     api = get_api()
     api.task.stop_tasks(task_id_list=[task_id])
     return {"status": "stopped"}
+
+@app.post("/api/jobs/{task_id}/delete")
+def delete_job(task_id: int):
+    try:
+        api = get_api()
+        api.task.delete_tasks(task_id_list=[task_id])
+        return {"status": "deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/jobs/delete-all")
+def delete_all_jobs():
+    try:
+        api = get_api()
+        result = api.query.get_task_list(page_num=1, page_size=50)
+        raw_jobs = result.get("items", []) if isinstance(result, dict) else result
+        ids = [j.get("id") for j in raw_jobs if j.get("id")]
+        if ids:
+            api.task.delete_tasks(task_id_list=ids)
+        return {"status": "deleted", "count": len(ids)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
