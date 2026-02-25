@@ -63,30 +63,14 @@ async def submit_job(file: UploadFile = File(...), software: str = Form(...), pr
 
         api = get_api()
 
-        # Get task ID from Fox directly
-        import requests, hashlib, time, random, hmac, base64, json
-        timestamp = str(int(time.time()))
-        nonce = str(random.randint(100000, 999999))
-        msg = f"{ACCESS_ID}{timestamp}{nonce}"
-        sig = base64.b64encode(hmac.new(ACCESS_KEY.encode(), msg.encode(), hashlib.sha256).digest()).decode()
-        headers = {
-            "Content-Type": "application/json",
-            "accessId": ACCESS_ID,
-            "channel": "4",
-            "platform": PLATFORM,
-            "UTCTimestamp": timestamp,
-            "nonce": nonce,
-            "signature": sig,
-            "version": "2.0.0",
-            "languageFlag": "1"
-        }
-        r = requests.post("https://jop.foxrenderfarm.com/api/render/task/createTask",
-            headers=headers, json={"count": 1})
-        task_data = r.json()
-        task_ids = task_data.get("data", [])
-        if not task_ids:
-            raise Exception(f"No task ID returned: {task_data}")
-        task_id = task_ids[0]
+        # Debug: check what create_task returns
+        result = api.task.create_task(count=1)
+        print(f"create_task result: {result}")
+
+        if not result or result[0] == 0:
+            raise Exception(f"create_task returned invalid ID: {result}")
+
+        task_id = result[0]
 
         from rayvision_sync.upload import RayvisionUpload
         upload = RayvisionUpload(api)
