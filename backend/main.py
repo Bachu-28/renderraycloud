@@ -76,7 +76,7 @@ async def submit(file: UploadFile = File(...), software: str = Form(...), projec
             raise Exception(f"Invalid task_id: {result}")
         from rayvision_sync.upload import RayvisionUpload
         upload = RayvisionUpload(api)
-        upload.upload_asset(file_path, str(task_id))
+        upload.upload_asset(file_path, str(task_id), engine_type='aspera')
         api.task.submit_task(task_id_list=[task_id])
         return {"status": "submitted", "task_id": task_id}
     except Exception as e:
