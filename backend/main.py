@@ -39,7 +39,7 @@ def do_upload_and_submit(tmp_dir, file_path, task_id, frames, software_version, 
         task_json = os.path.join(tmp_dir, "task.json")
         task_data = {
             "software_config": {
-                "cg_id": "2025",
+                "cg_id": "2007",
                 "cg_name": "Blender",
                 "cg_version": software_version,
                 "plugin_config": {}
