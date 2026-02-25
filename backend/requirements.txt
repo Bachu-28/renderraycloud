@@ -1,0 +1,12 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
+rayvision_api
+rayvision_log
+rayvision_utils
+rayvision_sync
+rayvision_maya
+rayvision_houdini
+rayvision_blender
+rayvision_max
+rayvision_clarisse
