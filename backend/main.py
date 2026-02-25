@@ -55,7 +55,7 @@ async def analyze_scene(file: UploadFile = File(...), software: str = Form(...),
     shutil.rmtree(tmp_dir, ignore_errors=True)
     return {"status": "analyzed", "file": file.filename, "software": software, "software_version": final_version, "project_name": project_name, "frames": frames, "file_size_mb": file_size_mb, "tips": tips}
 
-@app.post("/api/create-task")
+@app.get("/api/create-task")
 def create_task():
     try:
         api = get_api()
