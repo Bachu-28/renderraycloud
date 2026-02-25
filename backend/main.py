@@ -196,6 +196,11 @@ def delete_job(task_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/task-methods")
+def task_methods():
+    api = get_api()
+    return {"methods": [m for m in dir(api.task) if not m.startswith("_")]}
+
 @app.post("/api/jobs/delete-all")
 def delete_all_jobs():
     try:
