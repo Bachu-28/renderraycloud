@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-import os, tempfile, zipfile, re
+import os, tempfile, zipfile, re, shutil
 from rayvision_api import RayvisionAPI
 
 app = FastAPI()
@@ -39,47 +39,52 @@ def health():
 
 @app.post("/api/analyze")
 async def analyze_scene(file: UploadFile = File(...), software: str = Form(...), software_version: str = Form(""), project_name: str = Form(...), frames: str = Form("1")):
-    content = await file.read()
-    file_size_mb = round(len(content) / (1024 * 1024), 2)
     tmp_dir = tempfile.mkdtemp()
     file_path = os.path.join(tmp_dir, file.filename)
+    file_size = 0
     with open(file_path, "wb") as f:
-        f.write(content)
+        while chunk := await file.read(1024 * 1024):
+            f.write(chunk)
+            file_size += len(chunk)
+    file_size_mb = round(file_size / (1024 * 1024), 2)
     detected_version = detect_version(file_path, software)
     final_version = software_version or detected_version or "3.6"
     tips = [{"type": "ok", "message": "Scene file ready for rendering"}]
     if detected_version:
         tips.append({"type": "ok", "message": f"Auto-detected version: {detected_version}"})
-    return {"status": "analyzed", "file": file.filename, "software": software, "software_version": final_version, "project_name": project_name, "frames": frames, "file_size_mb": file_size_mb, "file_path": file_path, "tips": tips}
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    return {"status": "analyzed", "file": file.filename, "software": software, "software_version": final_version, "project_name": project_name, "frames": frames, "file_size_mb": file_size_mb, "tips": tips}
 
-@app.post("/api/submit")
-async def submit_job(file: UploadFile = File(...), software: str = Form(...), project_name: str = Form(...), frames: str = Form("1"), software_version: str = Form("3.6")):
+@app.post("/api/create-task")
+def create_task():
     try:
-        content = await file.read()
-        tmp_dir = tempfile.mkdtemp()
-        file_path = os.path.join(tmp_dir, file.filename)
-        with open(file_path, "wb") as f:
-            f.write(content)
-
         api = get_api()
         result = api.task.create_task(count=1)
-
-        # Extract task_id from taskIdList
         if isinstance(result, dict):
             task_id = result.get("taskIdList", [None])[0]
         elif isinstance(result, list):
             task_id = result[0]
         else:
             task_id = result
-
         if not task_id or task_id == 0:
-            raise Exception(f"No valid task_id in: {result}")
+            raise Exception(f"Invalid task_id: {result}")
+        transfer = api.query.get_transfer_bid()
+        input_bid = transfer.get("inputBid") or transfer.get("input_bid", "")
+        return {
+            "task_id": task_id,
+            "access_id": ACCESS_ID,
+            "access_key": ACCESS_KEY,
+            "input_bid": input_bid,
+            "platform": PLATFORM
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-        from rayvision_sync.upload import RayvisionUpload
-        upload = RayvisionUpload(api)
-        upload.upload_asset(file_path, str(task_id))
+@app.post("/api/submit-task")
+async def submit_task(task_id: int = Form(...), filename: str = Form(...), software: str = Form("blender"), frames: str = Form("1"), software_version: str = Form("3.6")):
+    try:
+        api = get_api()
         api.task.submit_task(task_id_list=[task_id])
-
         return {"status": "submitted", "task_id": task_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
