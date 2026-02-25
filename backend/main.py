@@ -163,7 +163,10 @@ async def submit(background_tasks: BackgroundTasks, file: UploadFile = File(...)
             f.write(chunk)
 
     # Upload to Supabase first
-    supabase_url = upload_to_supabase(file_path, file.filename)
+    try:
+        supabase_url = upload_to_supabase(file_path, file.filename)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase upload failed: {str(e)}")
     shutil.rmtree(tmp_dir, ignore_errors=True)
 
     api = get_api()
