@@ -44,7 +44,7 @@ async def submit_job(file_path: str = Form(...), software: str = Form(...), proj
 def get_jobs():
     try:
         api = get_api()
-        tasks = api.query.get_task_list({"pageNum": 1, "pageSize": 20})
+        tasks = api.query.get_task_list(page_num=1, page_size=20)
         return {"status": "ok", "jobs": tasks}
     except Exception as e:
         return {"status": "ok", "jobs": [], "error": str(e)}
