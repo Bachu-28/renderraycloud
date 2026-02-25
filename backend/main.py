@@ -24,20 +24,6 @@ def detect_version(file_path, software):
                     match = re.search(r'v(\d)(\d)(\d)', header)
                     if match:
                         return f"{match.group(1)}.{match.group(2)}"
-        elif software.lower() == "maya":
-            with open(file_path, 'r', errors='ignore') as f:
-                for line in f.readlines()[:20]:
-                    if 'fileVersion' in line or 'product' in line:
-                        match = re.search(r'(\d{4})', line)
-                        if match:
-                            return match.group(1)
-        elif software.lower() == "houdini":
-            with open(file_path, 'r', errors='ignore') as f:
-                for line in f.readlines()[:10]:
-                    if 'HoudiniVersion' in line:
-                        match = re.search(r'(\d+\.\d+)', line)
-                        if match:
-                            return match.group(1)
     except:
         pass
     return None
@@ -52,7 +38,7 @@ def health():
     return {"status": "connected", "platform": PLATFORM}
 
 @app.post("/api/analyze")
-async def analyze_scene(file: UploadFile = File(...), software: str = Form(...), software_version: str = Form(""), project_name: str = Form(...), frames: str = Form("1-10[1]")):
+async def analyze_scene(file: UploadFile = File(...), software: str = Form(...), software_version: str = Form(""), project_name: str = Form(...), frames: str = Form("1")):
     content = await file.read()
     file_size_mb = round(len(content) / (1024 * 1024), 2)
     tmp_dir = tempfile.mkdtemp()
@@ -74,13 +60,39 @@ async def submit_job(file: UploadFile = File(...), software: str = Form(...), pr
         file_path = os.path.join(tmp_dir, file.filename)
         with open(file_path, "wb") as f:
             f.write(content)
+
         api = get_api()
-        # out_user_id must be integer - use user ID from account
-        task_id = api.task.create_task(count=1)[0]
+
+        # Get task ID from Fox directly
+        import requests, hashlib, time, random, hmac, base64, json
+        timestamp = str(int(time.time()))
+        nonce = str(random.randint(100000, 999999))
+        msg = f"{ACCESS_ID}{timestamp}{nonce}"
+        sig = base64.b64encode(hmac.new(ACCESS_KEY.encode(), msg.encode(), hashlib.sha256).digest()).decode()
+        headers = {
+            "Content-Type": "application/json",
+            "accessId": ACCESS_ID,
+            "channel": "4",
+            "platform": PLATFORM,
+            "UTCTimestamp": timestamp,
+            "nonce": nonce,
+            "signature": sig,
+            "version": "2.0.0",
+            "languageFlag": "1"
+        }
+        r = requests.post("https://jop.foxrenderfarm.com/api/render/task/createTask",
+            headers=headers, json={"count": 1})
+        task_data = r.json()
+        task_ids = task_data.get("data", [])
+        if not task_ids:
+            raise Exception(f"No task ID returned: {task_data}")
+        task_id = task_ids[0]
+
         from rayvision_sync.upload import RayvisionUpload
         upload = RayvisionUpload(api)
         upload.upload_asset(file_path, task_id=str(task_id))
         api.task.submit_task(task_id_list=[task_id])
+
         return {"status": "submitted", "task_id": task_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
