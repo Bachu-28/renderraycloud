@@ -55,7 +55,7 @@ def do_upload_and_submit(supabase_url, filename, task_id, frames, software_versi
 
         scene_name = os.path.splitext(filename)[0]
         frames_str = f"{frames}-{frames}[1]" if "-" not in str(frames) else frames
-        server_path = f"/D/fox_user/{filename}"
+        server_path = file_path
 
         task_data = {
             "software_config": {
