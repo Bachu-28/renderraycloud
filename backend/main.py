@@ -184,7 +184,7 @@ def download_job(task_id: int):
 @app.post("/api/jobs/{task_id}/stop")
 def stop_job(task_id: int):
     api = get_api()
-    api.task.stop_tasks(task_id_list=[task_id])
+    api.task.stop_task(task_id)
     return {"status": "stopped"}
 
 @app.post("/api/jobs/{task_id}/delete")
@@ -209,7 +209,10 @@ def delete_all_jobs():
         raw_jobs = result.get("items", []) if isinstance(result, dict) else result
         ids = [j.get("id") for j in raw_jobs if j.get("id")]
         if ids:
-            api.task.abort_tasks(task_id_list=ids)
+            for tid in ids:
+            try:
+                api.task.abort_task(tid)
+            except: pass
         return {"status": "deleted", "count": len(ids)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
