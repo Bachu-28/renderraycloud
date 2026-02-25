@@ -78,7 +78,7 @@ def create_task():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/submit-task")
+@app.post("/api/submit")
 async def submit_task(task_id: int = Form(...), filename: str = Form(...), software: str = Form("blender"), frames: str = Form("1"), software_version: str = Form("3.6")):
     try:
         api = get_api()
