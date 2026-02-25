@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-import os, tempfile, zipfile, shutil, json
+import os, tempfile, zipfile, shutil, json, requests
 from rayvision_api import RayvisionAPI
 
 app = FastAPI()
@@ -12,41 +12,119 @@ ACCESS_KEY = "c51cc40192e9779266b8d7acfa1ae176"
 DOMAIN = "jop.foxrenderfarm.com"
 PLATFORM = "62"
 
+SUPABASE_URL = "https://iuspabmbuirrtunxbkvg.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1c3BhYm1idWlycnR1bnhia3ZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MDk5MDMsImV4cCI6MjA4NzQ4NTkwM30.nuA9kr2IIEazvccttdNrdisF2F8UBpFKqLZ54Qbq0eM"
+SUPABASE_BUCKET = "foxrender"
+SUPABASE_FOLDER = "render"
+
 job_status = {}
 
 def get_api():
     return RayvisionAPI(access_id=ACCESS_ID, access_key=ACCESS_KEY, domain=DOMAIN, platform=PLATFORM)
 
-def do_upload_and_submit(tmp_dir, file_path, task_id, frames, software_version, project_name):
+def upload_to_supabase(file_path, filename):
+    url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{SUPABASE_FOLDER}/{filename}"
+    headers = {
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/octet-stream"
+    }
+    with open(file_path, "rb") as f:
+        response = requests.put(url, headers=headers, data=f)
+    if response.status_code not in [200, 201]:
+        raise Exception(f"Supabase upload failed: {response.text}")
+    public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{SUPABASE_FOLDER}/{filename}"
+    return public_url
+
+def download_from_supabase(public_url, dest_path):
+    response = requests.get(public_url, stream=True)
+    if response.status_code != 200:
+        raise Exception(f"Supabase download failed: {response.text}")
+    with open(dest_path, "wb") as f:
+        for chunk in response.iter_content(chunk_size=1024*1024):
+            f.write(chunk)
+
+def do_upload_and_submit(supabase_url, filename, task_id, frames, software_version, project_name):
+    tmp_dir = tempfile.mkdtemp()
     try:
         job_status[task_id] = "uploading"
         api = get_api()
-        scene_name = os.path.splitext(os.path.basename(file_path))[0]
+
+        # Download from Supabase to Railway tmp
+        file_path = os.path.join(tmp_dir, filename)
+        download_from_supabase(supabase_url, file_path)
+
+        scene_name = os.path.splitext(filename)[0]
         frames_str = f"{frames}-{frames}[1]" if "-" not in str(frames) else frames
+        server_path = f"/D/fox_user/{filename}"
+
         task_data = {
-            "software_config": {"cg_name": "Blender", "cg_version": software_version, "plugins": {}},
-            "task_info": {
-                "task_id": str(task_id), "cg_id": "2007", "frames_per_task": "1",
-                "pre_frames": "100", "job_stop_time": "259200", "task_stop_time": "0",
-                "time_out": "43200", "is_layer_rendering": "1", "is_distribute_render": "0",
-                "distribute_render_node": "3", "input_cg_file": file_path,
-                "input_project_path": "", "project_name": project_name, "ram": "64",
-                "os_name": "1", "render_layer_type": "0", "platform": PLATFORM,
-                "channel": "4", "tiles": "1", "tiles_type": "block", "is_picture": "0", "stop_after_test": "1"
+            "software_config": {
+                "cg_name": "Blender",
+                "cg_version": software_version,
+                "plugins": {}
             },
-            "scene_info_render": {"common": {"frames": frames_str, "Render_Format": "PNG", "scene_name": [scene_name], "width": "1920", "height": "1080", "camera_name": "Camera", "Output_path": "/tmp/"}},
-            "scene_info": {"common": {"frames": frames_str, "Render_Format": "PNG", "scene_name": [scene_name], "width": "1920", "height": "1080", "camera_name": "Camera", "Output_path": "/tmp/"}}
+            "task_info": {
+                "task_id": str(task_id),
+                "cg_id": "2007",
+                "frames_per_task": "1",
+                "pre_frames": "100",
+                "job_stop_time": "259200",
+                "task_stop_time": "0",
+                "time_out": "43200",
+                "is_layer_rendering": "1",
+                "is_distribute_render": "0",
+                "distribute_render_node": "3",
+                "input_cg_file": server_path,
+                "input_project_path": "",
+                "project_name": project_name,
+                "ram": "64",
+                "os_name": "1",
+                "render_layer_type": "0",
+                "platform": PLATFORM,
+                "channel": "4",
+                "tiles": "1",
+                "tiles_type": "block",
+                "is_picture": "0",
+                "stop_after_test": "1"
+            },
+            "scene_info_render": {
+                "common": {
+                    "frames": frames_str,
+                    "Render_Format": "PNG",
+                    "scene_name": [scene_name],
+                    "width": "1920",
+                    "height": "1080",
+                    "camera_name": "Camera",
+                    "Output_path": "/tmp/"
+                }
+            },
+            "scene_info": {
+                "common": {
+                    "frames": frames_str,
+                    "Render_Format": "PNG",
+                    "scene_name": [scene_name],
+                    "width": "1920",
+                    "height": "1080",
+                    "camera_name": "Camera",
+                    "Output_path": "/tmp/"
+                }
+            }
         }
+
         task_json = os.path.join(tmp_dir, "task.json")
         with open(task_json, "w") as f:
             json.dump(task_data, f)
+
         upload_json = os.path.join(tmp_dir, "upload.json")
+        upload_data = {"asset": [{"local": file_path, "server": filename}]}
         with open(upload_json, "w") as f:
-            json.dump({"asset": [{"local": file_path, "server": os.path.basename(file_path)}]}, f)
+            json.dump(upload_data, f)
+
         from rayvision_sync.upload import RayvisionUpload
         upload = RayvisionUpload(api)
         upload.upload_config(str(task_id), [task_json])
         upload.upload_asset(upload_json, engine_type="aspera")
+
         api.task.submit_task(task_id)
         job_status[task_id] = "submitted"
     except Exception as e:
@@ -83,6 +161,11 @@ async def submit(background_tasks: BackgroundTasks, file: UploadFile = File(...)
     with open(file_path, "wb") as f:
         while chunk := await file.read(1024 * 1024):
             f.write(chunk)
+
+    # Upload to Supabase first
+    supabase_url = upload_to_supabase(file_path, file.filename)
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+
     api = get_api()
     result = api.task.create_task(count=1)
     if isinstance(result, dict):
@@ -93,18 +176,14 @@ async def submit(background_tasks: BackgroundTasks, file: UploadFile = File(...)
         task_id = result
     if not task_id or task_id == 0:
         raise HTTPException(status_code=500, detail=f"Invalid task_id: {result}")
+
     job_status[task_id] = "uploading"
-    background_tasks.add_task(do_upload_and_submit, tmp_dir, file_path, task_id, frames, software_version, project_name)
-    return {"status": "uploading", "task_id": task_id}
+    background_tasks.add_task(do_upload_and_submit, supabase_url, file.filename, task_id, frames, software_version, project_name)
+    return {"status": "uploading", "task_id": task_id, "supabase_url": supabase_url}
 
 @app.get("/api/job-status/{task_id}")
 def get_job_status(task_id: int):
     return {"task_id": task_id, "status": job_status.get(task_id, "unknown")}
-
-@app.get("/api/task-methods")
-def task_methods():
-    api = get_api()
-    return {"methods": [m for m in dir(api.task) if not m.startswith("_")]}
 
 @app.get("/api/jobs")
 def get_jobs():
@@ -167,9 +246,14 @@ def delete_all_jobs():
         ids = [j.get("id") for j in raw_jobs if j.get("id")]
         for tid in ids:
             try:
-                api.task.delete_task(tid)
+                api.task.abort_task(tid)
             except:
                 pass
         return {"status": "deleted", "count": len(ids)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/task-methods")
+def task_methods():
+    api = get_api()
+    return {"methods": [m for m in dir(api.task) if not m.startswith("_")]}
