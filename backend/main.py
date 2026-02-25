@@ -191,7 +191,7 @@ def stop_job(task_id: int):
 def delete_job(task_id: int):
     try:
         api = get_api()
-        api.task.delete_tasks(task_id_list=[task_id])
+        api.task.abort_tasks(task_id_list=[task_id])
         return {"status": "deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -204,7 +204,7 @@ def delete_all_jobs():
         raw_jobs = result.get("items", []) if isinstance(result, dict) else result
         ids = [j.get("id") for j in raw_jobs if j.get("id")]
         if ids:
-            api.task.delete_tasks(task_id_list=ids)
+            api.task.abort_tasks(task_id_list=ids)
         return {"status": "deleted", "count": len(ids)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
