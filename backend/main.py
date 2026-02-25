@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-import os, tempfile, zipfile, shutil
+import os, tempfile, zipfile, re
 from rayvision_api import RayvisionAPI
 
 app = FastAPI()
@@ -15,6 +15,33 @@ PLATFORM = "62"
 def get_api():
     return RayvisionAPI(access_id=ACCESS_ID, access_key=ACCESS_KEY, domain=DOMAIN, platform=PLATFORM)
 
+def detect_version(file_path, software):
+    try:
+        if software.lower() == "blender":
+            with open(file_path, 'rb') as f:
+                header = f.read(12).decode('ascii', errors='ignore')
+                if 'BLENDER' in header:
+                    match = re.search(r'v(\d)(\d)(\d)', header)
+                    if match:
+                        return f"{match.group(1)}.{match.group(2)}"
+        elif software.lower() == "maya":
+            with open(file_path, 'r', errors='ignore') as f:
+                for line in f.readlines()[:20]:
+                    if 'fileVersion' in line or 'product' in line:
+                        match = re.search(r'(\d{4})', line)
+                        if match:
+                            return match.group(1)
+        elif software.lower() == "houdini":
+            with open(file_path, 'r', errors='ignore') as f:
+                for line in f.readlines()[:10]:
+                    if 'HoudiniVersion' in line:
+                        match = re.search(r'(\d+\.\d+)', line)
+                        if match:
+                            return match.group(1)
+    except:
+        pass
+    return None
+
 @app.get("/")
 def root():
     return {"status": "RenderRayCloud API running"}
@@ -25,17 +52,22 @@ def health():
     return {"status": "connected", "platform": PLATFORM}
 
 @app.post("/api/analyze")
-async def analyze_scene(file: UploadFile = File(...), software: str = Form(...), software_version: str = Form(...), project_name: str = Form(...), frames: str = Form("1-10[1]")):
+async def analyze_scene(file: UploadFile = File(...), software: str = Form(...), software_version: str = Form(""), project_name: str = Form(...), frames: str = Form("1-10[1]")):
     content = await file.read()
     file_size_mb = round(len(content) / (1024 * 1024), 2)
     tmp_dir = tempfile.mkdtemp()
     file_path = os.path.join(tmp_dir, file.filename)
     with open(file_path, "wb") as f:
         f.write(content)
-    return {"status": "analyzed", "file": file.filename, "software": software, "software_version": software_version, "project_name": project_name, "frames": frames, "file_size_mb": file_size_mb, "file_path": file_path, "tips": [{"type": "ok", "message": "Scene file ready for rendering"}]}
+    detected_version = detect_version(file_path, software)
+    final_version = software_version or detected_version or "3.6"
+    tips = [{"type": "ok", "message": "Scene file ready for rendering"}]
+    if detected_version:
+        tips.append({"type": "ok", "message": f"Auto-detected version: {detected_version}"})
+    return {"status": "analyzed", "file": file.filename, "software": software, "software_version": final_version, "project_name": project_name, "frames": frames, "file_size_mb": file_size_mb, "file_path": file_path, "tips": tips}
 
 @app.post("/api/submit")
-async def submit_job(file: UploadFile = File(...), software: str = Form(...), project_name: str = Form(...), frames: str = Form("1-10[1]"), software_version: str = Form("2023")):
+async def submit_job(file: UploadFile = File(...), software: str = Form(...), project_name: str = Form(...), frames: str = Form("1"), software_version: str = Form("3.6")):
     try:
         content = await file.read()
         tmp_dir = tempfile.mkdtemp()
@@ -43,7 +75,8 @@ async def submit_job(file: UploadFile = File(...), software: str = Form(...), pr
         with open(file_path, "wb") as f:
             f.write(content)
         api = get_api()
-        task_id = api.task.create_task(count=1, out_user_id=project_name)[0]
+        # out_user_id must be integer - use user ID from account
+        task_id = api.task.create_task(count=1)[0]
         from rayvision_sync.upload import RayvisionUpload
         upload = RayvisionUpload(api)
         upload.upload_asset(file_path, task_id=str(task_id))
@@ -76,21 +109,13 @@ def download_job(task_id: int):
         download_path = f"/tmp/renders/{task_id}"
         os.makedirs(download_path, exist_ok=True)
         download.download(task_id_list=[task_id], local_path=download_path, print_log=False)
-
-        # Zip all downloaded files
         zip_path = f"/tmp/renders/task_{task_id}.zip"
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for root, dirs, files in os.walk(download_path):
                 for file in files:
                     fp = os.path.join(root, file)
                     zf.write(fp, os.path.relpath(fp, download_path))
-
-        return FileResponse(
-            zip_path,
-            media_type="application/zip",
-            filename=f"render_{task_id}.zip",
-            headers={"Content-Disposition": f"attachment; filename=render_{task_id}.zip"}
-        )
+        return FileResponse(zip_path, media_type="application/zip", filename=f"render_{task_id}.zip")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
