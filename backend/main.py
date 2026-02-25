@@ -1,7 +1,7 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-import os, tempfile, zipfile, re, shutil
+import os, tempfile, zipfile, re, shutil, json
 from rayvision_api import RayvisionAPI
 
 app = FastAPI()
@@ -12,6 +12,8 @@ ACCESS_KEY = "c51cc40192e9779266b8d7acfa1ae176"
 DOMAIN = "jop.foxrenderfarm.com"
 PLATFORM = "62"
 
+job_status = {}
+
 def get_api():
     return RayvisionAPI(access_id=ACCESS_ID, access_key=ACCESS_KEY, domain=DOMAIN, platform=PLATFORM)
 
@@ -21,13 +23,31 @@ def detect_version(file_path, software):
             with open(file_path, "rb") as f:
                 header = f.read(12).decode("ascii", errors="ignore")
                 if "BLENDER" in header:
-                    import re
                     match = re.search(r"v(\d)(\d)(\d)", header)
                     if match:
                         return f"{match.group(1)}.{match.group(2)}"
     except:
         pass
     return None
+
+def do_upload_and_submit(tmp_dir, file_path, task_id):
+    try:
+        job_status[task_id] = "uploading"
+        api = get_api()
+        # Create upload.json as required by rayvision_sync
+        upload_json = os.path.join(tmp_dir, "upload.json")
+        upload_data = {"asset": [{"local": file_path, "server": os.path.basename(file_path)}]}
+        with open(upload_json, "w") as f:
+            json.dump(upload_data, f)
+        from rayvision_sync.upload import RayvisionUpload
+        upload = RayvisionUpload(api)
+        upload.upload_asset(upload_json, engine_type="aspera")
+        api.task.submit_task(task_id_list=[task_id])
+        job_status[task_id] = "submitted"
+    except Exception as e:
+        job_status[task_id] = f"error:{str(e)}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 @app.get("/")
 def root():
@@ -57,32 +77,29 @@ async def analyze_scene(file: UploadFile = File(...), software: str = Form(...),
     return {"status": "analyzed", "file": file.filename, "software": software, "software_version": final_version, "project_name": project_name, "frames": frames, "file_size_mb": file_size_mb, "tips": tips}
 
 @app.post("/api/submit")
-async def submit(file: UploadFile = File(...), software: str = Form(...), project_name: str = Form(...), frames: str = Form("1"), software_version: str = Form("3.6")):
+async def submit(background_tasks: BackgroundTasks, file: UploadFile = File(...), software: str = Form(...), project_name: str = Form(...), frames: str = Form("1"), software_version: str = Form("3.6")):
     tmp_dir = tempfile.mkdtemp()
     file_path = os.path.join(tmp_dir, file.filename)
-    try:
-        with open(file_path, "wb") as f:
-            while chunk := await file.read(1024 * 1024):
-                f.write(chunk)
-        api = get_api()
-        result = api.task.create_task(count=1)
-        if isinstance(result, dict):
-            task_id = result.get("taskIdList", [None])[0]
-        elif isinstance(result, list):
-            task_id = result[0]
-        else:
-            task_id = result
-        if not task_id or task_id == 0:
-            raise Exception(f"Invalid task_id: {result}")
-        from rayvision_sync.upload import RayvisionUpload
-        upload = RayvisionUpload(api)
-        upload.upload_asset(file_path, str(task_id), engine_type='aspera')
-        api.task.submit_task(task_id_list=[task_id])
-        return {"status": "submitted", "task_id": task_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+    with open(file_path, "wb") as f:
+        while chunk := await file.read(1024 * 1024):
+            f.write(chunk)
+    api = get_api()
+    result = api.task.create_task(count=1)
+    if isinstance(result, dict):
+        task_id = result.get("taskIdList", [None])[0]
+    elif isinstance(result, list):
+        task_id = result[0]
+    else:
+        task_id = result
+    if not task_id or task_id == 0:
+        raise HTTPException(status_code=500, detail=f"Invalid task_id: {result}")
+    job_status[task_id] = "uploading"
+    background_tasks.add_task(do_upload_and_submit, tmp_dir, file_path, task_id)
+    return {"status": "uploading", "task_id": task_id}
+
+@app.get("/api/job-status/{task_id}")
+def get_job_status(task_id: int):
+    return {"task_id": task_id, "status": job_status.get(task_id, "unknown")}
 
 @app.get("/api/create-task")
 def create_task():
