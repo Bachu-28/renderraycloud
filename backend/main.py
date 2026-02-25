@@ -21,78 +21,32 @@ def do_upload_and_submit(tmp_dir, file_path, task_id, frames, software_version, 
     try:
         job_status[task_id] = "uploading"
         api = get_api()
-
         scene_name = os.path.splitext(os.path.basename(file_path))[0]
         frames_str = f"{frames}-{frames}[1]" if "-" not in str(frames) else frames
-
         task_data = {
-            "software_config": {
-                "cg_name": "Blender",
-                "cg_version": software_version,
-                "plugins": {}
-            },
+            "software_config": {"cg_name": "Blender", "cg_version": software_version, "plugins": {}},
             "task_info": {
-                "task_id": str(task_id),
-                "cg_id": "2007",
-                "frames_per_task": "1",
-                "pre_frames": "100",
-                "job_stop_time": "259200",
-                "task_stop_time": "0",
-                "time_out": "43200",
-                "is_layer_rendering": "1",
-                "is_distribute_render": "0",
-                "distribute_render_node": "3",
-                "input_cg_file": file_path,
-                "input_project_path": "",
-                "project_name": project_name,
-                "ram": "64",
-                "os_name": "1",
-                "render_layer_type": "0",
-                "platform": PLATFORM,
-                "channel": "4",
-                "tiles": "1",
-                "tiles_type": "block",
-                "is_picture": "0",
-                "stop_after_test": "1"
+                "task_id": str(task_id), "cg_id": "2007", "frames_per_task": "1",
+                "pre_frames": "100", "job_stop_time": "259200", "task_stop_time": "0",
+                "time_out": "43200", "is_layer_rendering": "1", "is_distribute_render": "0",
+                "distribute_render_node": "3", "input_cg_file": file_path,
+                "input_project_path": "", "project_name": project_name, "ram": "64",
+                "os_name": "1", "render_layer_type": "0", "platform": PLATFORM,
+                "channel": "4", "tiles": "1", "tiles_type": "block", "is_picture": "0", "stop_after_test": "1"
             },
-            "scene_info_render": {
-                "common": {
-                    "frames": frames_str,
-                    "Render_Format": "PNG",
-                    "scene_name": [scene_name],
-                    "width": "1920",
-                    "height": "1080",
-                    "camera_name": "Camera",
-                    "Output_path": "/tmp/"
-                }
-            },
-            "scene_info": {
-                "common": {
-                    "frames": frames_str,
-                    "Render_Format": "PNG",
-                    "scene_name": [scene_name],
-                    "width": "1920",
-                    "height": "1080",
-                    "camera_name": "Camera",
-                    "Output_path": "/tmp/"
-                }
-            }
+            "scene_info_render": {"common": {"frames": frames_str, "Render_Format": "PNG", "scene_name": [scene_name], "width": "1920", "height": "1080", "camera_name": "Camera", "Output_path": "/tmp/"}},
+            "scene_info": {"common": {"frames": frames_str, "Render_Format": "PNG", "scene_name": [scene_name], "width": "1920", "height": "1080", "camera_name": "Camera", "Output_path": "/tmp/"}}
         }
-
         task_json = os.path.join(tmp_dir, "task.json")
         with open(task_json, "w") as f:
             json.dump(task_data, f)
-
         upload_json = os.path.join(tmp_dir, "upload.json")
-        upload_data = {"asset": [{"local": file_path, "server": os.path.basename(file_path)}]}
         with open(upload_json, "w") as f:
-            json.dump(upload_data, f)
-
+            json.dump({"asset": [{"local": file_path, "server": os.path.basename(file_path)}]}, f)
         from rayvision_sync.upload import RayvisionUpload
         upload = RayvisionUpload(api)
         upload.upload_config(str(task_id), [task_json])
         upload.upload_asset(upload_json, engine_type="aspera")
-
         api.task.submit_task(task_id)
         job_status[task_id] = "submitted"
     except Exception as e:
@@ -147,6 +101,11 @@ async def submit(background_tasks: BackgroundTasks, file: UploadFile = File(...)
 def get_job_status(task_id: int):
     return {"task_id": task_id, "status": job_status.get(task_id, "unknown")}
 
+@app.get("/api/task-methods")
+def task_methods():
+    api = get_api()
+    return {"methods": [m for m in dir(api.task) if not m.startswith("_")]}
+
 @app.get("/api/jobs")
 def get_jobs():
     try:
@@ -183,23 +142,21 @@ def download_job(task_id: int):
 
 @app.post("/api/jobs/{task_id}/stop")
 def stop_job(task_id: int):
-    api = get_api()
-    api.task.stop_task(task_id)
-    return {"status": "stopped"}
+    try:
+        api = get_api()
+        api.task.stop_task(task_id)
+        return {"status": "stopped"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/jobs/{task_id}/delete")
 def delete_job(task_id: int):
     try:
         api = get_api()
-        api.task.abort_tasks(task_id_list=[task_id])
+        api.task.delete_task(task_id)
         return {"status": "deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/task-methods")
-def task_methods():
-    api = get_api()
-    return {"methods": [m for m in dir(api.task) if not m.startswith("_")]}
 
 @app.post("/api/jobs/delete-all")
 def delete_all_jobs():
@@ -208,11 +165,11 @@ def delete_all_jobs():
         result = api.query.get_task_list(page_num=1, page_size=50)
         raw_jobs = result.get("items", []) if isinstance(result, dict) else result
         ids = [j.get("id") for j in raw_jobs if j.get("id")]
-        if ids:
-            for tid in ids:
+        for tid in ids:
             try:
-                api.task.abort_task(tid)
-            except: pass
+                api.task.delete_task(tid)
+            except:
+                pass
         return {"status": "deleted", "count": len(ids)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
