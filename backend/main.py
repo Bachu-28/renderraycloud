@@ -39,35 +39,41 @@ def do_upload_and_submit(tmp_dir, file_path, task_id, frames, software_version, 
         task_json = os.path.join(tmp_dir, "task.json")
         task_data = {
             "software_config": {
-                "cg_id": "2007",
                 "cg_name": "Blender",
                 "cg_version": software_version,
-                "plugin_config": {}
+                "plugins": {}
             },
             "task_info": {
                 "task_id": str(task_id),
+                "cg_id": "2007",
                 "frames_per_task": "1",
-                "pre_frames": "000",
-                "job_stop_time": "28800",
-                "task_stop_time": "86400",
+                "pre_frames": "100",
+                "job_stop_time": "259200",
+                "task_stop_time": "0",
                 "time_out": "43200",
                 "is_layer_rendering": "1",
                 "is_distribute_render": "0",
+                "distribute_render_node": "3",
                 "input_cg_file": file_path,
                 "input_project_path": "",
-                "job_name": project_name,
-                "user_id": str(api.user_id if hasattr(api, "user_id") else ""),
+                "project_name": project_name,
                 "ram": "64",
                 "os_name": "1",
                 "render_layer_type": "0",
-                "is_default_notify": "1",
-                "is_submit_now": "1"
+                "platform": "62",
+                "channel": "4",
+                "tiles": "1",
+                "tiles_type": "block",
+                "is_picture": "0",
+                "stop_after_test": "1"
             },
-            "scene_info_render": [{
-                "frames": frames,
-                "output_type": "png",
-                "scene_name": os.path.basename(file_path)
-            }]
+            "scene_info_render": {
+                "common": {
+                    "frames": frames,
+                    "Render_Format": "PNG",
+                    "scene_name": [os.path.splitext(os.path.basename(file_path))[0]]
+                }
+            }
         }
         with open(task_json, "w") as f:
             json.dump(task_data, f)
