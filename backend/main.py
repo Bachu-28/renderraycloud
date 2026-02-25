@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import os, tempfile
+from fastapi.responses import FileResponse
+import os, tempfile, zipfile, shutil
 from rayvision_api import RayvisionAPI
 
 app = FastAPI()
@@ -65,6 +66,33 @@ def get_jobs():
         return {"status": "ok", "jobs": jobs}
     except Exception as e:
         return {"status": "ok", "jobs": [], "error": str(e)}
+
+@app.get("/api/jobs/{task_id}/download")
+def download_job(task_id: int):
+    try:
+        api = get_api()
+        from rayvision_sync.download import RayvisionDownload
+        download = RayvisionDownload(api)
+        download_path = f"/tmp/renders/{task_id}"
+        os.makedirs(download_path, exist_ok=True)
+        download.download(task_id_list=[task_id], local_path=download_path, print_log=False)
+
+        # Zip all downloaded files
+        zip_path = f"/tmp/renders/task_{task_id}.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, dirs, files in os.walk(download_path):
+                for file in files:
+                    fp = os.path.join(root, file)
+                    zf.write(fp, os.path.relpath(fp, download_path))
+
+        return FileResponse(
+            zip_path,
+            media_type="application/zip",
+            filename=f"render_{task_id}.zip",
+            headers={"Content-Disposition": f"attachment; filename=render_{task_id}.zip"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/jobs/{task_id}/stop")
 def stop_job(task_id: int):

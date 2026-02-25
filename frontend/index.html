@@ -1694,7 +1694,7 @@ async function downloadJob(id) {
   try {
     const fd = new FormData();
     fd.append('local_path', '/tmp/renderraycloud/outputs');
-    await fetch(`${API}/api/jobs/${id}/download`, { method: 'POST', body: fd });
+    window.open(`${API}/api/jobs/${id}/download`, '_blank');
     showToast('Download started!', 'success');
   } catch { showToast('Error downloading', 'error'); }
 }
