@@ -42,9 +42,12 @@ async def submit_job(file_path: str = Form(...), software: str = Form(...), proj
 
 @app.get("/api/jobs")
 def get_jobs():
-    api = get_api()
-    tasks = api.query.get_task_list({})
-    return {"status": "ok", "jobs": tasks}
+    try:
+        api = get_api()
+        tasks = api.query.get_task_list({"pageNum": 1, "pageSize": 20})
+        return {"status": "ok", "jobs": tasks}
+    except Exception as e:
+        return {"status": "ok", "jobs": [], "error": str(e)}
 
 @app.post("/api/jobs/{task_id}/stop")
 def stop_job(task_id: int):
