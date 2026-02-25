@@ -63,14 +63,20 @@ async def submit_job(file: UploadFile = File(...), software: str = Form(...), pr
 
         api = get_api()
 
-        # Debug: check what create_task returns
-        result = api.task.create_task(count=1)
-        print(f"create_task result: {result}")
+        # Use rayvision_api task creation with correct params
+        task_id_list = api.task.create_task(count=1)
+        print(f"Raw create_task response: {task_id_list}")
 
-        if not result or result[0] == 0:
-            raise Exception(f"create_task returned invalid ID: {result}")
+        # Handle different return formats
+        if isinstance(task_id_list, list) and len(task_id_list) > 0:
+            task_id = task_id_list[0]
+        elif isinstance(task_id_list, dict):
+            task_id = task_id_list.get("data", [None])[0] or task_id_list.get("taskId")
+        else:
+            task_id = task_id_list
 
-        task_id = result[0]
+        if not task_id or task_id == 0:
+            raise Exception(f"Invalid task_id: {task_id_list}")
 
         from rayvision_sync.upload import RayvisionUpload
         upload = RayvisionUpload(api)
