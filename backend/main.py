@@ -17,80 +17,32 @@ job_status = {}
 def get_api():
     return RayvisionAPI(access_id=ACCESS_ID, access_key=ACCESS_KEY, domain=DOMAIN, platform=PLATFORM)
 
-def detect_version(file_path, software):
-    try:
-        if software.lower() == "blender":
-            with open(file_path, "rb") as f:
-                header = f.read(12).decode("ascii", errors="ignore")
-                if "BLENDER" in header:
-                    match = re.search(r"v(\d)(\d)(\d)", header)
-                    if match:
-                        return f"{match.group(1)}.{match.group(2)}"
-    except:
-        pass
-    return None
-
 def do_upload_and_submit(tmp_dir, file_path, task_id, frames, software_version, project_name):
     try:
         job_status[task_id] = "uploading"
         api = get_api()
 
-        # Create task.json with render settings
-        task_json = os.path.join(tmp_dir, "task.json")
-        task_data = {
-            "software_config": {
-                "cg_name": "Blender",
-                "cg_version": software_version,
-                "plugins": {}
-            },
-            "task_info": {
-                "task_id": str(task_id),
-                "cg_id": "2007",
-                "frames_per_task": "1",
-                "pre_frames": "100",
-                "job_stop_time": "259200",
-                "task_stop_time": "0",
-                "time_out": "43200",
-                "is_layer_rendering": "1",
-                "is_distribute_render": "0",
-                "distribute_render_node": "3",
-                "input_cg_file": file_path,
-                "input_project_path": "",
-                "project_name": project_name,
-                "ram": "64",
-                "os_name": "1",
-                "render_layer_type": "0",
-                "platform": "62",
-                "channel": "4",
-                "tiles": "1",
-                "tiles_type": "block",
-                "is_picture": "0",
-                "stop_after_test": "1"
-            },
-            "scene_info_render": {
-                "common": {
-                    "frames": frames,
-                    "Render_Format": "PNG",
-                    "scene_name": [os.path.splitext(os.path.basename(file_path))[0]]
-                }
-            }
-        }
-        with open(task_json, "w") as f:
-            json.dump(task_data, f)
-
-        # Create upload.json
-        upload_json = os.path.join(tmp_dir, "upload.json")
-        upload_data = {"asset": [{"local": file_path, "server": os.path.basename(file_path)}]}
-        with open(upload_json, "w") as f:
-            json.dump(upload_data, f)
-
-        # Upload config files first
+        from rayvision_blender.analyze_blender import AnalyzeBlender
         from rayvision_sync.upload import RayvisionUpload
-        upload = RayvisionUpload(api)
-        upload.upload_config(str(task_id), [task_json])
-        upload.upload_asset(upload_json, engine_type="aspera")
+        from rayvision_api.utils import update_task_info
 
-        # Submit
+        analyze_info = {
+            "cg_file": file_path,
+            "workspace": tmp_dir,
+            "software_version": software_version,
+            "project_name": project_name,
+            "plugin_config": {},
+            "platform": PLATFORM
+        }
+        analyze_obj = AnalyzeBlender(**analyze_info)
+        analyze_obj.analyse(exe_path="")
+
+        update_task_info({"pre_frames": frames, "frames_per_task": "1"}, analyze_obj.task_json)
+
+        upload = RayvisionUpload(api)
+        upload.upload_config(str(task_id), [analyze_obj.task_json])
+        upload.upload_asset(analyze_obj.upload_json, engine_type="aspera")
+
         api.task.submit_task(task_id)
         job_status[task_id] = "submitted"
     except Exception as e:
@@ -117,13 +69,8 @@ async def analyze_scene(file: UploadFile = File(...), software: str = Form(...),
             f.write(chunk)
             file_size += len(chunk)
     file_size_mb = round(file_size / (1024 * 1024), 2)
-    detected_version = detect_version(file_path, software)
-    final_version = software_version or detected_version or "3.6"
-    tips = [{"type": "ok", "message": "Scene file ready for rendering"}]
-    if detected_version:
-        tips.append({"type": "ok", "message": f"Auto-detected version: {detected_version}"})
     shutil.rmtree(tmp_dir, ignore_errors=True)
-    return {"status": "analyzed", "file": file.filename, "software": software, "software_version": final_version, "project_name": project_name, "frames": frames, "file_size_mb": file_size_mb, "tips": tips}
+    return {"status": "analyzed", "file": file.filename, "software": software, "software_version": software_version or "3.6", "project_name": project_name, "frames": frames, "file_size_mb": file_size_mb, "tips": [{"type": "ok", "message": "Scene file ready for rendering"}]}
 
 @app.post("/api/submit")
 async def submit(background_tasks: BackgroundTasks, file: UploadFile = File(...), software: str = Form(...), project_name: str = Form(...), frames: str = Form("1"), software_version: str = Form("3.6")):
