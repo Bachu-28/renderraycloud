@@ -68,13 +68,11 @@ def create_task():
             task_id = result
         if not task_id or task_id == 0:
             raise Exception(f"Invalid task_id: {result}")
-        transfer = api.query.get_transfer_bid()
-        input_bid = transfer.get("inputBid") or transfer.get("input_bid", "")
         return {
             "task_id": task_id,
             "access_id": ACCESS_ID,
             "access_key": ACCESS_KEY,
-            "input_bid": input_bid,
+            
             "platform": PLATFORM
         }
     except Exception as e:
