@@ -1603,7 +1603,7 @@ async function submitJob() {
 
   try {
     const formData = new FormData();
-    formData.append('file_path', analysisResult?.file_path || '');
+    formData.append('file', selectedFile);
     formData.append('software', selectedSoftware);
     formData.append('project_name', document.getElementById('projectName').value || 'MyProject');
     formData.append('frames', document.getElementById('frameRange').value || '1-10[1]');
