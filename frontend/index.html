@@ -1636,8 +1636,8 @@ async function loadJobs() {
   try {
     const r = await fetch(API + '/api/jobs');
     const data = await r.json();
-    renderJobsTable(data.jobs || []);
-    updateMetrics(data.jobs || []);
+    renderJobsTable((data.jobs && data.jobs.items) || data.jobs || []);
+    updateMetrics((data.jobs && data.jobs.items) || data.jobs || []);
   } catch {
     renderJobsTable([]);
   }
