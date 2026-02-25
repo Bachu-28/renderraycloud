@@ -30,18 +30,61 @@ def detect_version(file_path, software):
         pass
     return None
 
-def do_upload_and_submit(tmp_dir, file_path, task_id):
+def do_upload_and_submit(tmp_dir, file_path, task_id, frames, software_version, project_name):
     try:
         job_status[task_id] = "uploading"
         api = get_api()
-        # Create upload.json as required by rayvision_sync
+
+        # Create task.json with render settings
+        task_json = os.path.join(tmp_dir, "task.json")
+        task_data = {
+            "software_config": {
+                "cg_id": "2025",
+                "cg_name": "Blender",
+                "cg_version": software_version,
+                "plugin_config": {}
+            },
+            "task_info": {
+                "task_id": str(task_id),
+                "frames_per_task": "1",
+                "pre_frames": "000",
+                "job_stop_time": "28800",
+                "task_stop_time": "86400",
+                "time_out": "43200",
+                "is_layer_rendering": "1",
+                "is_distribute_render": "0",
+                "input_cg_file": file_path,
+                "input_project_path": "",
+                "job_name": project_name,
+                "user_id": str(api.user_id if hasattr(api, "user_id") else ""),
+                "ram": "64",
+                "os_name": "1",
+                "render_layer_type": "0",
+                "is_default_notify": "1",
+                "is_submit_now": "1"
+            },
+            "scene_info_render": [{
+                "frames": frames,
+                "output_type": "png",
+                "scene_name": os.path.basename(file_path)
+            }]
+        }
+        with open(task_json, "w") as f:
+            json.dump(task_data, f)
+
+        # Create upload.json
         upload_json = os.path.join(tmp_dir, "upload.json")
         upload_data = {"asset": [{"local": file_path, "server": os.path.basename(file_path)}]}
         with open(upload_json, "w") as f:
             json.dump(upload_data, f)
+
+        # Upload config files first
         from rayvision_sync.upload import RayvisionUpload
         upload = RayvisionUpload(api)
+        upload.upload_config(str(task_id), [task_json])
         upload.upload_asset(upload_json, engine_type="aspera")
+
+        # Submit
         api.task.submit_task(task_id)
         job_status[task_id] = "submitted"
     except Exception as e:
@@ -94,29 +137,12 @@ async def submit(background_tasks: BackgroundTasks, file: UploadFile = File(...)
     if not task_id or task_id == 0:
         raise HTTPException(status_code=500, detail=f"Invalid task_id: {result}")
     job_status[task_id] = "uploading"
-    background_tasks.add_task(do_upload_and_submit, tmp_dir, file_path, task_id)
+    background_tasks.add_task(do_upload_and_submit, tmp_dir, file_path, task_id, frames, software_version, project_name)
     return {"status": "uploading", "task_id": task_id}
 
 @app.get("/api/job-status/{task_id}")
 def get_job_status(task_id: int):
     return {"task_id": task_id, "status": job_status.get(task_id, "unknown")}
-
-@app.get("/api/create-task")
-def create_task():
-    try:
-        api = get_api()
-        result = api.task.create_task(count=1)
-        if isinstance(result, dict):
-            task_id = result.get("taskIdList", [None])[0]
-        elif isinstance(result, list):
-            task_id = result[0]
-        else:
-            task_id = result
-        if not task_id or task_id == 0:
-            raise Exception(f"Invalid task_id: {result}")
-        return {"task_id": task_id, "access_id": ACCESS_ID, "platform": PLATFORM}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/jobs")
 def get_jobs():
