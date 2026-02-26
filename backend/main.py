@@ -1,3 +1,82 @@
+def detect_software_version(file_path, software):
+    """Auto-detect software version from file header/content"""
+    try:
+        filename = os.path.basename(file_path).lower()
+        ext = os.path.splitext(filename)[1]
+
+        # Blender .blend
+        if ext == ".blend":
+            with open(file_path, "rb") as f:
+                header = f.read(20).decode("ascii", errors="ignore")
+                if "BLENDER" in header:
+                    import re
+                    match = re.search(r"v(\d)(\d+)", header)
+                    if match:
+                        return f"{match.group(1)}.{match.group(2)}", "Blender"
+
+        # 3ds Max .max
+        elif ext == ".max":
+            with open(file_path, "rb") as f:
+                data = f.read(1024)
+            # Max files contain version in binary header
+            for version, year in [
+                (b"\x19\x02", "2022"), (b"\x18\x02", "2021"),
+                (b"\x17\x02", "2020"), (b"\x16\x02", "2019"),
+                (b"\x15\x02", "2018"), (b"\x14\x02", "2017"),
+                (b"\x13\x02", "2016"), (b"\x12\x02", "2015"),
+                (b"\x1a\x02", "2023"), (b"\x1b\x02", "2024"),
+            ]:
+                if version in data:
+                    return year, "3dsmax"
+            return "2022", "3dsmax"  # default
+
+        # Maya .ma (ASCII)
+        elif ext == ".ma":
+            with open(file_path, "r", errors="ignore") as f:
+                for line in f:
+                    if "requires maya" in line.lower():
+                        import re
+                        match = re.search(r'"(\d+\.\d+)"', line)
+                        if match:
+                            return match.group(1), "maya"
+                    if line.count("//") > 0 and "Maya" in line:
+                        import re
+                        match = re.search(r"Maya (\d{4})", line)
+                        if match:
+                            return match.group(1), "maya"
+
+        # Maya .mb (binary)
+        elif ext == ".mb":
+            with open(file_path, "rb") as f:
+                data = f.read(512).decode("ascii", errors="ignore")
+                import re
+                match = re.search(r"Maya (\d{4})", data)
+                if match:
+                    return match.group(1), "maya"
+
+        # Cinema 4D .c4d
+        elif ext == ".c4d":
+            with open(file_path, "rb") as f:
+                data = f.read(512).decode("ascii", errors="ignore")
+                import re
+                match = re.search(r"C4D(\d+)", data)
+                if match:
+                    v = match.group(1)
+                    return f"R{v[:2]}", "cinema4d"
+
+        # Houdini .hip/.hipnc
+        elif ext in [".hip", ".hipnc", ".hiplc"]:
+            with open(file_path, "rb") as f:
+                data = f.read(512).decode("ascii", errors="ignore")
+                import re
+                match = re.search(r"(\d+\.\d+\.\d+)", data)
+                if match:
+                    return match.group(1), "houdini"
+
+    except Exception as e:
+        pass
+    return None, software
+
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -151,8 +230,14 @@ async def analyze_scene(file: UploadFile = File(...), software: str = Form(...),
             f.write(chunk)
             file_size += len(chunk)
     file_size_mb = round(file_size / (1024 * 1024), 2)
+    detected_version, detected_software = detect_software_version(file_path, software)
+    final_version = software_version or detected_version or "3.6"
+    final_software = detected_software or software
     shutil.rmtree(tmp_dir, ignore_errors=True)
-    return {"status": "analyzed", "file": file.filename, "software": software, "software_version": software_version or "3.6", "project_name": project_name, "frames": frames, "file_size_mb": file_size_mb, "tips": [{"type": "ok", "message": "Scene file ready for rendering"}]}
+    tips = [{"type": "ok", "message": "Scene file ready for rendering"}]
+    if detected_version:
+        tips.append({"type": "ok", "message": f"Auto-detected version: {detected_version}"})
+    return {"status": "analyzed", "file": file.filename, "software": final_software, "software_version": final_version, "project_name": project_name, "frames": frames, "file_size_mb": file_size_mb, "detected_version": detected_version, "tips": tips}
 
 @app.post("/api/submit")
 async def submit(background_tasks: BackgroundTasks, file: UploadFile = File(...), software: str = Form(...), project_name: str = Form(...), frames: str = Form("1"), software_version: str = Form("3.6")):
