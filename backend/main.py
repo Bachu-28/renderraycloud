@@ -390,3 +390,12 @@ def poll_and_download(task_id, project_name):
             job_status[task_id] = f"poll_error:{str(e)}"
             break
         time.sleep(60)
+
+@app.get("/api/jobs/raw")
+def get_jobs_raw():
+    try:
+        api = get_api()
+        result = api.query.get_task_list(page_num=1, page_size=5)
+        return {"raw": result}
+    except Exception as e:
+        return {"error": str(e)}
