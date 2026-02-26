@@ -1736,6 +1736,9 @@ function showToast(msg, type = 'success') {
 // ─── INIT ───
 checkAPI();
 setInterval(checkAPI, 30000);
+
+// AUTO REFRESH
+setInterval(function(){ if(document.getElementById("page-dashboard").classList.contains("active")){ loadJobs(); } }, 10000);
 </script>
 </body>
 </html>
