@@ -182,6 +182,7 @@ async def submit(background_tasks: BackgroundTasks, file: UploadFile = File(...)
 
     job_status[task_id] = "uploading"
     background_tasks.add_task(do_upload_and_submit, supabase_url, file.filename, task_id, frames, software_version, project_name)
+    threading.Thread(target=poll_and_download, args=(task_id, project_name), daemon=True).start()
     return {"status": "uploading", "task_id": task_id, "supabase_url": supabase_url}
 
 @app.get("/api/job-status/{task_id}")
@@ -260,3 +261,47 @@ def delete_all_jobs():
 def task_methods():
     api = get_api()
     return {"methods": [m for m in dir(api.task) if not m.startswith("_")]}
+
+
+import threading, time
+
+def poll_and_download(task_id, project_name):
+    """Poll Fox until job is done, then download and upload to Supabase"""
+    api = get_api()
+    while True:
+        try:
+            result = api.query.get_task_list(page_num=1, page_size=50)
+            raw_jobs = result.get("items", []) if isinstance(result, dict) else result
+            job = next((j for j in raw_jobs if j.get("id") == task_id), None)
+            if not job:
+                time.sleep(60)
+                continue
+            status_code = job.get("taskStatus", 0)
+            if status_code in [70, 80]:  # done
+                # Download from Fox
+                from rayvision_sync.download import RayvisionDownload
+                download = RayvisionDownload(api)
+                download_path = f"/tmp/renders/{task_id}"
+                os.makedirs(download_path, exist_ok=True)
+                download.download(task_id_list=[task_id], local_path=download_path, print_log=False)
+                # Upload each file to Supabase
+                output_urls = []
+                for root, dirs, files in os.walk(download_path):
+                    for file in files:
+                        fp = os.path.join(root, file)
+                        supabase_path = f"outputs/{task_id}/{file}"
+                        url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{supabase_path}"
+                        headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/octet-stream"}
+                        with open(fp, "rb") as f:
+                            requests.put(url, headers=headers, data=f)
+                        output_urls.append(f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{supabase_path}")
+                job_status[task_id] = f"done:{','.join(output_urls)}"
+                shutil.rmtree(download_path, ignore_errors=True)
+                break
+            elif status_code in [50, 60]:  # error
+                job_status[task_id] = "render_error"
+                break
+        except Exception as e:
+            job_status[task_id] = f"poll_error:{str(e)}"
+            break
+        time.sleep(60)
