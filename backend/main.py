@@ -283,7 +283,7 @@ def get_jobs():
         jobs = []
         for j in raw_jobs:
             sc = j.get("taskStatus", 0)
-            sm = {0:"waiting",5:"waiting",10:"waiting",20:"queued",25:"queued",30:"rendering",35:"rendering",40:"stopped",45:"queued",50:"error",60:"error",70:"done",80:"done"}
+            sm = {0:"waiting",5:"waiting",10:"done",20:"done",23:"done",25:"done",30:"rendering",35:"rendering",40:"stopped",45:"done",50:"error",60:"error",70:"done",80:"done"}
             jobs.append({"id": j.get("id"), "task_id": j.get("id"), "project_name": j.get("projectName") or j.get("sceneName","--"), "software": j.get("cgName") or "Blender", "frames": j.get("framesRange") or str(j.get("totalFrames","--")), "task_status": sm.get(sc,"queued"), "render_percent": j.get("progress") or 0})
         return {"status": "ok", "jobs": jobs}
     except Exception as e:
