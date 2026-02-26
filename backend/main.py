@@ -171,6 +171,11 @@ def do_upload_and_submit(supabase_url, filename, task_id, frames, software_versi
                 "ram": "64GB",
                 "gpuNum": "None"
             },
+            "hardware_config": {
+                "model": ["28C", "24Cplus"],
+                "ram": "64GB",
+                "gpuNum": None
+            },
             "scene_info_render": {
                 "common": {
                     "frames": frames_str,
