@@ -144,7 +144,7 @@ def do_upload_and_submit(supabase_url, filename, task_id, frames, software_versi
             },
             "task_info": {
                 "task_id": str(task_id),
-                "cg_id": {"blender":"2007","3dsmax":"2001","maya":"2000","cinema4d":"2002","houdini":"2004","c4d":"2002"}.get(software.lower(), "2007"),
+                "cg_id": {"blender":"2007","3dsmax":"2001","maya":"2000","cinema4d":"2002","houdini":"2004","c4d":"2002"}.get(os.path.splitext(filename)[1].lower().lstrip(".").replace("max","3dsmax").replace("blend","blender").replace("ma","maya").replace("mb","maya").replace("hip","houdini").replace("c4d","cinema4d"), "2007"),
                 "frames_per_task": "1",
                 "pre_frames": "100",
                 "job_stop_time": "259200",
