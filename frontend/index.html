@@ -1444,7 +1444,7 @@ nav {
 </div>
 
 <script>
-const API = 'https://renderraycloud-production.up.railway.app';
+const API = 'http://localhost:8000';
 let selectedFile = null;
 let selectedSoftware = null;
 let analysisResult = null;
@@ -1603,7 +1603,7 @@ async function submitJob() {
 
   try {
     const formData = new FormData();
-    formData.append('file', selectedFile);
+    formData.append('file_path', analysisResult?.file_path || '');
     formData.append('software', selectedSoftware);
     formData.append('project_name', document.getElementById('projectName').value || 'MyProject');
     formData.append('frames', document.getElementById('frameRange').value || '1-10[1]');
@@ -1636,8 +1636,8 @@ async function loadJobs() {
   try {
     const r = await fetch(API + '/api/jobs');
     const data = await r.json();
-    renderJobsTable((data.jobs && data.jobs.items) || data.jobs || []);
-    updateMetrics((data.jobs && data.jobs.items) || data.jobs || []);
+    renderJobsTable(data.jobs || []);
+    updateMetrics(data.jobs || []);
   } catch {
     renderJobsTable([]);
   }
@@ -1694,7 +1694,7 @@ async function downloadJob(id) {
   try {
     const fd = new FormData();
     fd.append('local_path', '/tmp/renderraycloud/outputs');
-    window.open(`${API}/api/jobs/${id}/download`, '_blank');
+    await fetch(`${API}/api/jobs/${id}/download`, { method: 'POST', body: fd });
     showToast('Download started!', 'success');
   } catch { showToast('Error downloading', 'error'); }
 }
