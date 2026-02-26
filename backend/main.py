@@ -1,540 +1,1013 @@
-import os, tempfile, zipfile, shutil, json, requests, threading, time, re
-
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from rayvision_api import RayvisionAPI
-
-# ─────────────────────────────────────────────
-# CONFIG
-# ─────────────────────────────────────────────
-ACCESS_ID  = "8w3SKaQEYVMdS0IWKKxHWrFPNYTH3WsZ"
-ACCESS_KEY = "c51cc40192e9779266b8d7acfa1ae176"
-DOMAIN     = "jop.foxrenderfarm.com"
-PLATFORM   = "62"
-
-SUPABASE_URL    = "https://iuspabmbuirrtunxbkvg.supabase.co"
-SUPABASE_KEY    = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1c3BhYm1idWlycnR1bnhia3ZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MDk5MDMsImV4cCI6MjA4NzQ4NTkwM30.nuA9kr2IIEazvccttdNrdisF2F8UBpFKqLZ54Qbq0eM"
-SUPABASE_BUCKET = "foxrender"
-SUPABASE_FOLDER = "render"
-
-# ─────────────────────────────────────────────
-# CLEAN EXTENSION → SOFTWARE MAPPING  (BUG FIX)
-# ─────────────────────────────────────────────
-EXT_TO_SOFTWARE = {
-    ".blend": "blender",
-    ".max":   "3dsmax",
-    ".ma":    "maya",
-    ".mb":    "maya",
-    ".hip":   "houdini",
-    ".hipnc": "houdini",
-    ".hiplc": "houdini",
-    ".c4d":   "cinema4d",
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>RenderRayCloud — Professional Cloud Rendering</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --bg: #050508;
+  --bg2: #0a0a10;
+  --bg3: #0f0f18;
+  --card: #111120;
+  --card2: #161628;
+  --border: #1e1e35;
+  --border2: #252540;
+  --accent: #4f6ef7;
+  --accent2: #7c3aed;
+  --accent3: #06b6d4;
+  --glow: rgba(79,110,247,0.15);
+  --glow2: rgba(124,58,237,0.12);
+  --text: #e8e8f0;
+  --text2: #9090b0;
+  --text3: #5a5a7a;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --font: 'Syne', sans-serif;
+  --mono: 'JetBrains Mono', monospace;
 }
 
-CG_NAME = {
-    "blender":  "Blender",
-    "3dsmax":   "3ds Max",
-    "maya":     "Maya",
-    "cinema4d": "Cinema 4D",
-    "houdini":  "Houdini",
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  min-height: 100vh;
+  overflow-x: hidden;
 }
 
-CG_ID = {
-    "blender":  "2007",
-    "3dsmax":   "2001",
-    "maya":     "2000",
-    "cinema4d": "2002",
-    "houdini":  "2004",
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.4;
 }
 
-def get_software_key(filename: str) -> str:
-    """Return clean software key from filename extension."""
-    ext = os.path.splitext(filename.lower())[1]
-    return EXT_TO_SOFTWARE.get(ext, "blender")
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: 
+    linear-gradient(rgba(79,110,247,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(79,110,247,0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 0;
+}
 
+nav {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 40px;
+  height: 64px;
+  background: rgba(5,5,8,0.85);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border);
+}
 
-# ─────────────────────────────────────────────
-# AUTO-DETECT SOFTWARE VERSION FROM FILE
-# ─────────────────────────────────────────────
-def detect_software_version(file_path, software):
-    try:
-        filename = os.path.basename(file_path).lower()
-        ext = os.path.splitext(filename)[1]
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
 
-        if ext == ".blend":
-            with open(file_path, "rb") as f:
-                header = f.read(20).decode("ascii", errors="ignore")
-                if "BLENDER" in header:
-                    match = re.search(r"v(\d)(\d+)", header)
-                    if match:
-                        return f"{match.group(1)}.{match.group(2)}", "blender"
+.logo-icon {
+  width: 32px; height: 32px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+}
 
-        elif ext == ".max":
-            with open(file_path, "rb") as f:
-                data = f.read(1024)
-            for version, year in [
-                (b"\x19\x02", "2022"), (b"\x18\x02", "2021"),
-                (b"\x17\x02", "2020"), (b"\x16\x02", "2019"),
-                (b"\x15\x02", "2018"), (b"\x14\x02", "2017"),
-                (b"\x13\x02", "2016"), (b"\x12\x02", "2015"),
-                (b"\x1a\x02", "2023"), (b"\x1b\x02", "2024"),
-            ]:
-                if version in data:
-                    return year, "3dsmax"
-            return "2022", "3dsmax"
+.logo span { color: var(--accent); }
 
-        elif ext == ".ma":
-            with open(file_path, "r", errors="ignore") as f:
-                for line in f:
-                    if "requires maya" in line.lower():
-                        match = re.search(r'"(\d+\.\d+)"', line)
-                        if match:
-                            return match.group(1), "maya"
-                    if "//" in line and "Maya" in line:
-                        match = re.search(r"Maya (\d{4})", line)
-                        if match:
-                            return match.group(1), "maya"
+.nav-links {
+  display: flex;
+  gap: 32px;
+  list-style: none;
+}
 
-        elif ext == ".mb":
-            with open(file_path, "rb") as f:
-                data = f.read(512).decode("ascii", errors="ignore")
-                match = re.search(r"Maya (\d{4})", data)
-                if match:
-                    return match.group(1), "maya"
+.nav-links a {
+  color: var(--text2);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  transition: color 0.2s;
+}
 
-        elif ext == ".c4d":
-            with open(file_path, "rb") as f:
-                data = f.read(512).decode("ascii", errors="ignore")
-                match = re.search(r"C4D(\d+)", data)
-                if match:
-                    v = match.group(1)
-                    return f"R{v[:2]}", "cinema4d"
+.nav-links a:hover { color: var(--text); }
 
-        elif ext in [".hip", ".hipnc", ".hiplc"]:
-            with open(file_path, "rb") as f:
-                data = f.read(512).decode("ascii", errors="ignore")
-                match = re.search(r"(\d+\.\d+\.\d+)", data)
-                if match:
-                    return match.group(1), "houdini"
+.nav-cta {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 8px 20px;
+  border-radius: 8px;
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
 
-    except Exception:
-        pass
-    return None, software
+.nav-cta:hover {
+  background: #3d5ce8;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(79,110,247,0.4);
+}
 
+.page { display: none; padding-top: 64px; min-height: 100vh; position: relative; z-index: 1; }
+.page.active { display: block; }
 
-# ─────────────────────────────────────────────
-# APP SETUP
-# ─────────────────────────────────────────────
-app = FastAPI(title="RenderRayCloud API")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+/* LANDING */
+.hero {
+  min-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 80px 40px;
+  position: relative;
+}
 
-job_status = {}
+.hero-orb { position: absolute; border-radius: 50%; filter: blur(80px); pointer-events: none; }
+.hero-orb-1 { width: 600px; height: 600px; background: radial-gradient(circle, rgba(79,110,247,0.08) 0%, transparent 70%); top: -100px; left: 50%; transform: translateX(-50%); }
+.hero-orb-2 { width: 400px; height: 400px; background: radial-gradient(circle, rgba(124,58,237,0.06) 0%, transparent 70%); bottom: 0; right: 10%; }
 
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(79,110,247,0.1);
+  border: 1px solid rgba(79,110,247,0.2);
+  padding: 6px 16px;
+  border-radius: 100px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 32px;
+  animation: fadeInUp 0.6s ease both;
+}
 
-def get_api():
-    return RayvisionAPI(
-        access_id=ACCESS_ID,
-        access_key=ACCESS_KEY,
-        domain=DOMAIN,
-        platform=PLATFORM,
-    )
+.hero-badge::before {
+  content: '';
+  width: 6px; height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+}
 
+@keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.5); } }
 
-# ─────────────────────────────────────────────
-# SUPABASE HELPERS
-# ─────────────────────────────────────────────
-def upload_to_supabase(file_path, filename):
-    url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{SUPABASE_FOLDER}/{filename}"
-    headers = {
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/octet-stream",
+.hero h1 {
+  font-size: clamp(48px, 8vw, 96px);
+  font-weight: 800;
+  line-height: 1.0;
+  letter-spacing: -3px;
+  margin-bottom: 24px;
+  animation: fadeInUp 0.6s ease 0.1s both;
+}
+
+.hero h1 .line2 {
+  background: linear-gradient(135deg, var(--accent), var(--accent2), var(--accent3));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hero p { font-size: 18px; color: var(--text2); max-width: 560px; line-height: 1.7; margin-bottom: 48px; animation: fadeInUp 0.6s ease 0.2s both; }
+.hero-actions { display: flex; gap: 16px; animation: fadeInUp 0.6s ease 0.3s both; }
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: #fff; border: none; padding: 14px 32px; border-radius: 10px;
+  font-family: var(--font); font-size: 15px; font-weight: 700; cursor: pointer;
+  transition: all 0.2s; box-shadow: 0 0 30px rgba(79,110,247,0.3);
+}
+.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 40px rgba(79,110,247,0.5); }
+
+.btn-secondary {
+  background: transparent; color: var(--text); border: 1px solid var(--border2);
+  padding: 14px 32px; border-radius: 10px; font-family: var(--font);
+  font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+}
+.btn-secondary:hover { border-color: var(--accent); color: var(--accent); background: rgba(79,110,247,0.05); }
+
+.stats-bar {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 1px; background: var(--border); border: 1px solid var(--border);
+  border-radius: 16px; overflow: hidden; max-width: 800px;
+  margin: 80px auto 0; animation: fadeInUp 0.6s ease 0.4s both;
+}
+
+.stat { background: var(--card); padding: 28px 24px; text-align: center; }
+.stat-num { font-size: 32px; font-weight: 800; background: linear-gradient(135deg, var(--accent), var(--accent3)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.stat-label { font-size: 12px; color: var(--text3); margin-top: 4px; text-transform: uppercase; letter-spacing: 1px; }
+
+.section { padding: 100px 40px; max-width: 1200px; margin: 0 auto; }
+.section-label { font-size: 11px; font-weight: 700; color: var(--accent); letter-spacing: 3px; text-transform: uppercase; margin-bottom: 16px; }
+.section-title { font-size: clamp(32px, 4vw, 48px); font-weight: 800; letter-spacing: -1.5px; margin-bottom: 16px; }
+.section-sub { color: var(--text2); font-size: 16px; max-width: 480px; line-height: 1.6; margin-bottom: 60px; }
+
+.software-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+
+.software-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+  padding: 28px; cursor: pointer; transition: all 0.3s; position: relative; overflow: hidden;
+}
+.software-card::before { content: ''; position: absolute; inset: 0; background: linear-gradient(135deg, var(--glow), transparent); opacity: 0; transition: opacity 0.3s; }
+.software-card:hover { border-color: var(--accent); transform: translateY(-4px); box-shadow: 0 20px 60px rgba(79,110,247,0.15); }
+.software-card:hover::before { opacity: 1; }
+.sw-icon { font-size: 36px; margin-bottom: 16px; }
+.sw-name { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+.sw-desc { font-size: 13px; color: var(--text2); line-height: 1.5; }
+.sw-tag { display: inline-block; margin-top: 12px; font-size: 11px; font-weight: 600; color: var(--accent); background: rgba(79,110,247,0.1); padding: 3px 10px; border-radius: 100px; }
+
+/* DASHBOARD */
+.dashboard { display: grid; grid-template-columns: 240px 1fr; min-height: calc(100vh - 64px); }
+.sidebar { background: var(--bg2); border-right: 1px solid var(--border); padding: 32px 16px; position: sticky; top: 64px; height: calc(100vh - 64px); }
+.sidebar-section { margin-bottom: 32px; }
+.sidebar-label { font-size: 10px; font-weight: 700; color: var(--text3); letter-spacing: 2px; text-transform: uppercase; padding: 0 12px; margin-bottom: 8px; }
+.sidebar-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; color: var(--text2); transition: all 0.2s; margin-bottom: 2px; }
+.sidebar-item:hover { background: var(--card); color: var(--text); }
+.sidebar-item.active { background: rgba(79,110,247,0.1); color: var(--accent); }
+.sidebar-item .icon { font-size: 16px; width: 20px; text-align: center; }
+
+.main-content { padding: 40px; overflow-y: auto; }
+.page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 40px; }
+.page-title { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; }
+.page-sub { font-size: 14px; color: var(--text2); margin-top: 4px; }
+
+.metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }
+.metric-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; position: relative; overflow: hidden; }
+.metric-card::after { content: ''; position: absolute; top: 0; right: 0; width: 60px; height: 60px; background: radial-gradient(circle at top right, var(--glow), transparent); }
+.metric-label { font-size: 12px; color: var(--text2); font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+.metric-value { font-size: 36px; font-weight: 800; letter-spacing: -1px; }
+.metric-value.blue { color: var(--accent); }
+.metric-value.purple { color: #a78bfa; }
+.metric-value.cyan { color: var(--accent3); }
+.metric-value.green { color: var(--success); }
+.metric-change { font-size: 12px; color: var(--success); margin-top: 8px; font-family: var(--mono); }
+
+/* AUTO REFRESH INDICATOR */
+.refresh-indicator {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text3); font-family: var(--mono);
+}
+.refresh-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--success); animation: pulse 2s infinite;
+}
+
+.jobs-section { background: var(--card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+.jobs-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--border); }
+.jobs-title { font-size: 16px; font-weight: 700; }
+
+.jobs-table { width: 100%; border-collapse: collapse; }
+.jobs-table th { text-align: left; padding: 12px 24px; font-size: 11px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; background: var(--bg2); border-bottom: 1px solid var(--border); }
+.jobs-table td { padding: 16px 24px; font-size: 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.jobs-table tr:last-child td { border-bottom: none; }
+.jobs-table tr:hover td { background: rgba(79,110,247,0.03); }
+
+.status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 100px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+.status-badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; }
+.status-rendering { background: rgba(79,110,247,0.1); color: var(--accent); }
+.status-rendering::before { background: var(--accent); animation: pulse 2s infinite; }
+.status-done { background: rgba(16,185,129,0.1); color: var(--success); }
+.status-done::before { background: var(--success); }
+.status-waiting { background: rgba(245,158,11,0.1); color: var(--warning); }
+.status-waiting::before { background: var(--warning); animation: pulse 2s infinite; }
+.status-queued { background: rgba(245,158,11,0.1); color: var(--warning); }
+.status-queued::before { background: var(--warning); }
+.status-error { background: rgba(239,68,68,0.1); color: var(--error); }
+.status-error::before { background: var(--error); }
+.status-stopped { background: rgba(90,90,122,0.2); color: var(--text3); }
+.status-stopped::before { background: var(--text3); }
+
+.progress-bar { background: var(--bg); border-radius: 100px; height: 4px; width: 120px; overflow: hidden; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent3)); border-radius: 100px; transition: width 0.5s; }
+
+.action-btn { background: transparent; border: 1px solid var(--border2); color: var(--text2); padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: var(--font); transition: all 0.2s; margin-right: 4px; }
+.action-btn:hover { border-color: var(--accent); color: var(--accent); }
+.action-btn.danger:hover { border-color: var(--error); color: var(--error); }
+
+/* SUBMIT */
+.submit-layout { max-width: 900px; }
+
+.step-indicator { display: flex; align-items: center; gap: 0; margin-bottom: 40px; }
+.step { display: flex; align-items: center; gap: 10px; flex: 1; }
+.step-num { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; background: var(--bg3); border: 1px solid var(--border); color: var(--text3); flex-shrink: 0; }
+.step.active .step-num { background: var(--accent); border-color: var(--accent); color: #fff; }
+.step.done .step-num { background: var(--success); border-color: var(--success); color: #fff; }
+.step-label { font-size: 13px; font-weight: 600; color: var(--text3); }
+.step.active .step-label { color: var(--text); }
+.step-line { flex: 1; height: 1px; background: var(--border); margin: 0 12px; }
+
+.form-card { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 40px; margin-bottom: 20px; }
+.form-card-title { font-size: 18px; font-weight: 700; margin-bottom: 28px; display: flex; align-items: center; gap: 10px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.form-group { display: flex; flex-direction: column; gap: 8px; }
+.form-group.full { grid-column: 1 / -1; }
+.form-label { font-size: 12px; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: 1px; }
+.form-input, .form-select { background: var(--bg2); border: 1px solid var(--border); color: var(--text); padding: 12px 16px; border-radius: 10px; font-family: var(--font); font-size: 14px; transition: all 0.2s; outline: none; }
+.form-input:focus, .form-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,110,247,0.1); }
+.form-select option { background: var(--card); }
+
+.upload-zone { border: 2px dashed var(--border2); border-radius: 16px; padding: 60px 40px; text-align: center; cursor: pointer; transition: all 0.3s; background: var(--bg2); position: relative; }
+.upload-zone:hover, .upload-zone.dragover { border-color: var(--accent); background: rgba(79,110,247,0.05); }
+.upload-icon { font-size: 48px; margin-bottom: 16px; }
+.upload-title { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+.upload-sub { font-size: 14px; color: var(--text2); margin-bottom: 20px; }
+.upload-formats { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.format-tag { background: var(--bg3); border: 1px solid var(--border); color: var(--text2); font-size: 11px; font-weight: 700; font-family: var(--mono); padding: 4px 10px; border-radius: 6px; }
+#fileInput { display: none; }
+
+.file-selected { background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; gap: 12px; margin-top: 16px; display: none; }
+.file-selected.show { display: flex; }
+
+.software-selector { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.sw-option { border: 1px solid var(--border); border-radius: 12px; padding: 16px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 12px; background: var(--bg2); }
+.sw-option:hover { border-color: var(--border2); }
+.sw-option.selected { border-color: var(--accent); background: rgba(79,110,247,0.08); }
+.sw-option-icon { font-size: 24px; }
+.sw-option-name { font-size: 14px; font-weight: 600; }
+.sw-option-ext { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+
+.analysis-card { background: var(--card); border: 1px solid var(--border); border-radius: 20px; overflow: hidden; margin-bottom: 20px; }
+.analysis-header { background: linear-gradient(135deg, rgba(79,110,247,0.1), rgba(124,58,237,0.08)); border-bottom: 1px solid var(--border); padding: 24px 32px; display: flex; align-items: center; justify-content: space-between; }
+.analysis-title { font-size: 18px; font-weight: 700; }
+.analysis-status { font-size: 13px; color: var(--success); font-weight: 600; }
+.analysis-body { padding: 32px; }
+.analysis-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 32px; }
+.analysis-item { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+.analysis-item-label { font-size: 11px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+.analysis-item-value { font-size: 20px; font-weight: 700; font-family: var(--mono); }
+.tips-list { margin-top: 24px; }
+.tips-title { font-size: 14px; font-weight: 700; margin-bottom: 12px; color: var(--text2); }
+.tip-item { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-radius: 8px; font-size: 13px; margin-bottom: 8px; font-family: var(--mono); }
+.tip-warn { background: rgba(245,158,11,0.08); color: var(--warning); }
+.tip-ok { background: rgba(16,185,129,0.08); color: var(--success); }
+.tip-error { background: rgba(239,68,68,0.08); color: var(--error); }
+
+.loading-overlay { position: fixed; inset: 0; background: rgba(5,5,8,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 200; display: none; backdrop-filter: blur(10px); }
+.loading-overlay.show { display: flex; }
+.loader { width: 60px; height: 60px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 24px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { font-size: 16px; font-weight: 600; color: var(--text2); }
+.loading-sub { font-size: 13px; color: var(--text3); margin-top: 8px; font-family: var(--mono); }
+
+.toast { position: fixed; bottom: 32px; right: 32px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; display: flex; align-items: center; gap: 12px; font-size: 14px; font-weight: 600; z-index: 300; transform: translateY(100px); opacity: 0; transition: all 0.3s; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.success { border-color: rgba(16,185,129,0.3); }
+.toast.error { border-color: rgba(239,68,68,0.3); }
+
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+.api-status { display: flex; align-items: center; gap: 8px; font-size: 12px; font-family: var(--mono); color: var(--text3); }
+.api-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text3); }
+.api-dot.connected { background: var(--success); animation: pulse 2s infinite; }
+.api-dot.error { background: var(--error); }
+
+@media (max-width: 768px) {
+  nav { padding: 0 20px; }
+  .nav-links { display: none; }
+  .software-grid, .metrics-grid { grid-template-columns: 1fr 1fr; }
+  .dashboard { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+  .form-grid { grid-template-columns: 1fr; }
+  .software-selector { grid-template-columns: 1fr 1fr; }
+  .analysis-grid { grid-template-columns: 1fr; }
+  .stats-bar { grid-template-columns: 1fr 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="logo">
+    <div class="logo-icon">⚡</div>
+    Render<span>Ray</span>Cloud
+  </div>
+  <ul class="nav-links">
+    <li><a href="#" onclick="showPage('landing')">Home</a></li>
+    <li><a href="#" onclick="showPage('dashboard')">Dashboard</a></li>
+    <li><a href="#" onclick="showPage('submit')">Submit Job</a></li>
+  </ul>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <div class="api-status">
+      <div class="api-dot" id="apiDot"></div>
+      <span id="apiStatusText">Connecting...</span>
+    </div>
+    <button class="nav-cta" onclick="showPage('submit')">New Render →</button>
+  </div>
+</nav>
+
+<!-- LOADING -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loader"></div>
+  <div class="loading-text" id="loadingText">Analyzing scene...</div>
+  <div class="loading-sub" id="loadingSub">Please wait while we process your file</div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast">
+  <span id="toastIcon">✅</span>
+  <span id="toastMsg">Success!</span>
+</div>
+
+<!-- LANDING PAGE -->
+<div class="page active" id="page-landing">
+  <div class="hero">
+    <div class="hero-orb hero-orb-1"></div>
+    <div class="hero-orb hero-orb-2"></div>
+    <div class="hero-badge">Powered by Fox Renderfarm</div>
+    <h1>Cloud Rendering<br><span class="line2">Reimagined.</span></h1>
+    <p>Submit your 3D scenes, analyze assets, and render at scale — all from one beautiful platform. Maya, Houdini, Blender, and more.</p>
+    <div class="hero-actions">
+      <button class="btn-primary" onclick="showPage('submit')">Start Rendering →</button>
+      <button class="btn-secondary" onclick="showPage('dashboard')">View Dashboard</button>
+    </div>
+    <div class="stats-bar">
+      <div class="stat"><div class="stat-num">50K+</div><div class="stat-label">Renders Done</div></div>
+      <div class="stat"><div class="stat-num">6</div><div class="stat-label">3D Softwares</div></div>
+      <div class="stat"><div class="stat-num">99.9%</div><div class="stat-label">Uptime</div></div>
+      <div class="stat"><div class="stat-num">24/7</div><div class="stat-label">Support</div></div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-label">Supported Software</div>
+    <div class="section-title">Everything you render,<br>we support.</div>
+    <div class="section-sub">From Maya VFX pipelines to Blender animations — full analysis, asset detection, and cloud rendering for all major 3D tools.</div>
+    <div class="software-grid">
+      <div class="software-card" onclick="showPage('submit')"><div class="sw-icon">🎬</div><div class="sw-name">Autodesk Maya</div><div class="sw-desc">Full scene analysis with Arnold, V-Ray, and RenderMan support.</div><div class="sw-tag">.ma .mb</div></div>
+      <div class="software-card" onclick="showPage('submit')"><div class="sw-icon">🌊</div><div class="sw-name">SideFX Houdini</div><div class="sw-desc">Multi-ROP node support with Mantra and Karma rendering.</div><div class="sw-tag">.hip .hiplc</div></div>
+      <div class="software-card" onclick="showPage('submit')"><div class="sw-icon">🔷</div><div class="sw-name">Blender</div><div class="sw-desc">Cycles and EEVEE rendering with full asset packaging.</div><div class="sw-tag">.blend</div></div>
+      <div class="software-card" onclick="showPage('submit')"><div class="sw-icon">📐</div><div class="sw-name">3ds Max</div><div class="sw-desc">V-Ray, Corona, and Arnold support with plugin detection.</div><div class="sw-tag">.max</div></div>
+      <div class="software-card" onclick="showPage('submit')"><div class="sw-icon">🎯</div><div class="sw-name">Cinema 4D</div><div class="sw-desc">Full C4D scene support with Redshift and Arnold.</div><div class="sw-tag">.c4d</div></div>
+      <div class="software-card" onclick="showPage('submit')"><div class="sw-icon">✨</div><div class="sw-name">Clarisse iFX</div><div class="sw-desc">Isotropix Clarisse scene analysis and cloud submission.</div><div class="sw-tag">.project</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- DASHBOARD PAGE -->
+<div class="page" id="page-dashboard">
+  <div class="dashboard">
+    <div class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-label">Main</div>
+        <div class="sidebar-item active" onclick="showPage('dashboard')"><span class="icon">📊</span> Overview</div>
+        <div class="sidebar-item" onclick="showPage('submit')"><span class="icon">➕</span> New Job</div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">Jobs</div>
+        <div class="sidebar-item"><span class="icon">⚡</span> Active Renders</div>
+        <div class="sidebar-item"><span class="icon">✅</span> Completed</div>
+        <div class="sidebar-item"><span class="icon">📁</span> All Jobs</div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">Account</div>
+        <div class="sidebar-item"><span class="icon">💳</span> Credits</div>
+        <div class="sidebar-item"><span class="icon">⚙️</span> Settings</div>
+      </div>
+    </div>
+
+    <div class="main-content">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Dashboard</div>
+          <div class="page-sub">Welcome back — here's your render overview</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;">
+          <div class="refresh-indicator">
+            <div class="refresh-dot"></div>
+            <span id="refreshCountdown">Auto-refresh in 10s</span>
+          </div>
+          <button class="btn-primary" onclick="showPage('submit')">+ New Render</button>
+        </div>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-label">Active Jobs</div>
+          <div class="metric-value blue" id="metricActive">0</div>
+          <div class="metric-change">↑ Live rendering</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Waiting</div>
+          <div class="metric-value purple" id="metricWaiting">0</div>
+          <div class="metric-change">In queue</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Completed</div>
+          <div class="metric-value green" id="metricDone">0</div>
+          <div class="metric-change">Total finished</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Total Jobs</div>
+          <div class="metric-value cyan" id="metricTotal">0</div>
+          <div class="metric-change">All time</div>
+        </div>
+      </div>
+
+      <div class="jobs-section">
+        <div class="jobs-header">
+          <div class="jobs-title">Recent Jobs</div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span style="font-size:12px;color:var(--text3);font-family:var(--mono)" id="lastUpdated">Never updated</span>
+            <button class="action-btn" onclick="loadJobs()">↻ Refresh Now</button>
+          </div>
+        </div>
+        <table class="jobs-table">
+          <thead>
+            <tr>
+              <th>Task ID</th>
+              <th>Project</th>
+              <th>Software</th>
+              <th>Frames</th>
+              <th>Status</th>
+              <th>Progress</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="jobsTableBody">
+            <tr>
+              <td colspan="7" style="text-align:center;color:var(--text3);padding:40px;font-size:14px;">
+                Loading jobs...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SUBMIT JOB PAGE -->
+<div class="page" id="page-submit">
+  <div class="main-content">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Submit New Job</div>
+        <div class="page-sub">Upload your scene file and configure your render</div>
+      </div>
+      <button class="btn-secondary" onclick="showPage('dashboard')">← Back</button>
+    </div>
+
+    <div class="submit-layout">
+      <div class="step-indicator">
+        <div class="step active" id="step1"><div class="step-num">1</div><div class="step-label">Upload File</div></div>
+        <div class="step-line"></div>
+        <div class="step" id="step2"><div class="step-num">2</div><div class="step-label">Configure</div></div>
+        <div class="step-line"></div>
+        <div class="step" id="step3"><div class="step-num">3</div><div class="step-label">Analyze</div></div>
+        <div class="step-line"></div>
+        <div class="step" id="step4"><div class="step-num">4</div><div class="step-label">Submit</div></div>
+      </div>
+
+      <!-- STEP 1 & 2: UPLOAD + CONFIG -->
+      <div id="formStep1">
+        <div class="form-card">
+          <div class="form-card-title">📁 Select Your Scene File</div>
+          <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()"
+               ondragover="handleDragOver(event)" ondrop="handleDrop(event)" ondragleave="handleDragLeave(event)">
+            <input type="file" id="fileInput" onchange="handleFileSelect(event)"
+                   accept=".ma,.mb,.hip,.hiplc,.hipnc,.blend,.max,.c4d,.project"/>
+            <div class="upload-icon">☁️</div>
+            <div class="upload-title">Drop your scene file here</div>
+            <div class="upload-sub">or click to browse from your computer</div>
+            <div class="upload-formats">
+              <span class="format-tag">.ma</span>
+              <span class="format-tag">.mb</span>
+              <span class="format-tag">.hip</span>
+              <span class="format-tag">.blend</span>
+              <span class="format-tag">.max</span>
+              <span class="format-tag">.c4d</span>
+              <span class="format-tag">.project</span>
+            </div>
+          </div>
+          <div class="file-selected" id="fileSelectedInfo">
+            <span style="font-size:24px">📄</span>
+            <div>
+              <div style="font-weight:700;font-size:14px" id="selectedFileName">file.ma</div>
+              <div style="font-size:12px;color:var(--text2);font-family:var(--mono)" id="selectedFileSize">0 MB</div>
+            </div>
+            <span style="margin-left:auto;color:var(--success);font-size:20px">✓</span>
+          </div>
+        </div>
+
+        <div class="form-card">
+          <div class="form-card-title">🎯 Select Software</div>
+          <div class="software-selector">
+            <div class="sw-option" onclick="selectSoftware('maya', this)"><div class="sw-option-icon">🎬</div><div><div class="sw-option-name">Maya</div><div class="sw-option-ext">.ma .mb</div></div></div>
+            <div class="sw-option" onclick="selectSoftware('houdini', this)"><div class="sw-option-icon">🌊</div><div><div class="sw-option-name">Houdini</div><div class="sw-option-ext">.hip .hiplc</div></div></div>
+            <div class="sw-option" onclick="selectSoftware('blender', this)"><div class="sw-option-icon">🔷</div><div><div class="sw-option-name">Blender</div><div class="sw-option-ext">.blend</div></div></div>
+            <div class="sw-option" onclick="selectSoftware('3dsmax', this)"><div class="sw-option-icon">📐</div><div><div class="sw-option-name">3ds Max</div><div class="sw-option-ext">.max</div></div></div>
+            <div class="sw-option" onclick="selectSoftware('cinema4d', this)"><div class="sw-option-icon">🎯</div><div><div class="sw-option-name">Cinema 4D</div><div class="sw-option-ext">.c4d</div></div></div>
+            <div class="sw-option" onclick="selectSoftware('clarisse', this)"><div class="sw-option-icon">✨</div><div><div class="sw-option-name">Clarisse</div><div class="sw-option-ext">.project</div></div></div>
+          </div>
+        </div>
+
+        <div class="form-card">
+          <div class="form-card-title">⚙️ Render Settings</div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label">Project Name</label>
+              <input class="form-input" type="text" id="projectName" placeholder="My Render Project"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Software Version</label>
+              <input class="form-input" type="text" id="softwareVersion" placeholder="e.g. 2023, 3.6, 19.5"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Frame Range</label>
+              <input class="form-input" type="text" id="frameRange" placeholder="1-100[1]" value="1-10[1]"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Frame Step</label>
+              <input class="form-input" type="text" id="frameStep" placeholder="1"/>
+            </div>
+          </div>
+        </div>
+
+        <button class="btn-primary" onclick="analyzeScene()" style="width:100%;padding:16px;font-size:16px;">
+          🔍 Analyze Scene →
+        </button>
+      </div>
+
+      <!-- STEP 3: RESULTS -->
+      <div id="formStep3" style="display:none">
+        <div class="analysis-card">
+          <div class="analysis-header">
+            <div>
+              <div class="analysis-title">📊 Analysis Results</div>
+              <div style="font-size:13px;color:var(--text2);margin-top:4px" id="analysisFileName">scene.ma</div>
+            </div>
+            <div class="analysis-status" id="analysisStatus">✅ Analysis Complete</div>
+          </div>
+          <div class="analysis-body">
+            <div class="analysis-grid">
+              <div class="analysis-item"><div class="analysis-item-label">Software</div><div class="analysis-item-value" id="resSoftware">—</div></div>
+              <div class="analysis-item"><div class="analysis-item-label">File Size</div><div class="analysis-item-value" id="resSize">—</div></div>
+              <div class="analysis-item"><div class="analysis-item-label">Frame Range</div><div class="analysis-item-value" id="resFrames">—</div></div>
+              <div class="analysis-item"><div class="analysis-item-label">Project</div><div class="analysis-item-value" id="resProject">—</div></div>
+              <div class="analysis-item"><div class="analysis-item-label">Version</div><div class="analysis-item-value" id="resVersion">—</div></div>
+              <div class="analysis-item"><div class="analysis-item-label">Status</div><div class="analysis-item-value" id="resStatus" style="color:var(--success)">Ready</div></div>
+            </div>
+            <div class="tips-list" id="tipsList"></div>
+            <div style="display:flex;gap:12px;margin-top:32px;">
+              <button class="btn-secondary" onclick="resetForm()" style="flex:1;padding:14px;">← Start Over</button>
+              <button class="btn-primary" onclick="submitJob()" style="flex:2;padding:14px;font-size:15px;">🚀 Submit to Render Farm →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 4: SUBMITTED -->
+      <div id="formStep4" style="display:none">
+        <div class="form-card" style="text-align:center;padding:60px 40px;">
+          <div style="font-size:64px;margin-bottom:24px;">🚀</div>
+          <div style="font-size:28px;font-weight:800;margin-bottom:12px;">Job Submitted!</div>
+          <div style="color:var(--text2);font-size:15px;margin-bottom:32px;">Your scene is now queued on RenderRayCloud.<br>We'll process it using Fox Renderfarm's cloud infrastructure.</div>
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:32px;display:inline-block;min-width:280px;">
+            <div style="font-size:12px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Task ID</div>
+            <div style="font-size:32px;font-weight:800;font-family:var(--mono);color:var(--accent)" id="submittedTaskId">—</div>
+          </div>
+          <div style="display:flex;gap:12px;justify-content:center;">
+            <button class="btn-secondary" onclick="resetForm()">Submit Another</button>
+            <button class="btn-primary" onclick="showPage('dashboard')">View Dashboard →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = 'https://renderraycloud-production.up.railway.app';
+let selectedFile = null;
+let selectedSoftware = null;
+let analysisResult = null;
+let autoRefreshTimer = null;
+let countdownTimer = null;
+let countdown = 10;
+
+// ─── PAGE NAVIGATION ───
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  if (name === 'dashboard') {
+    loadJobs();
+    startAutoRefresh();
+  } else {
+    stopAutoRefresh();
+  }
+}
+
+// ─── AUTO REFRESH ───
+function startAutoRefresh() {
+  stopAutoRefresh();
+  countdown = 10;
+  updateCountdown();
+  countdownTimer = setInterval(() => {
+    countdown--;
+    updateCountdown();
+    if (countdown <= 0) {
+      countdown = 10;
+      loadJobs();
     }
-    with open(file_path, "rb") as f:
-        response = requests.put(url, headers=headers, data=f)
-    if response.status_code not in [200, 201]:
-        raise Exception(f"Supabase upload failed: {response.text}")
-    return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{SUPABASE_FOLDER}/{filename}"
+  }, 1000);
+}
 
+function stopAutoRefresh() {
+  if (countdownTimer) clearInterval(countdownTimer);
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+}
 
-def download_from_supabase(public_url, dest_path):
-    response = requests.get(public_url, stream=True)
-    if response.status_code != 200:
-        raise Exception(f"Supabase download failed: {response.text}")
-    with open(dest_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=1024 * 1024):
-            f.write(chunk)
+function updateCountdown() {
+  const el = document.getElementById('refreshCountdown');
+  if (el) el.textContent = `Auto-refresh in ${countdown}s`;
+}
 
+// ─── API HEALTH CHECK ───
+async function checkAPI() {
+  try {
+    const r = await fetch(API + '/api/health');
+    const d = await r.json();
+    document.getElementById('apiDot').className = 'api-dot connected';
+    document.getElementById('apiStatusText').textContent = 'Connected';
+  } catch {
+    document.getElementById('apiDot').className = 'api-dot error';
+    document.getElementById('apiStatusText').textContent = 'Backend offline';
+  }
+}
 
-# ─────────────────────────────────────────────
-# BACKGROUND: UPLOAD → SUBMIT TO FOX
-# ─────────────────────────────────────────────
-def do_upload_and_submit(supabase_url, filename, task_id, frames, software_version, project_name):
-    tmp_dir = tempfile.mkdtemp()
-    try:
-        job_status[task_id] = "uploading"
-        api = get_api()
+// ─── FILE HANDLING ───
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (file) setFile(file);
+}
 
-        # Download scene file from Supabase
-        file_path = os.path.join(tmp_dir, filename)
-        download_from_supabase(supabase_url, file_path)
+function handleDragOver(e) {
+  e.preventDefault();
+  document.getElementById('uploadZone').classList.add('dragover');
+}
 
-        sw_key      = get_software_key(filename)          # e.g. "3dsmax"
-        cg_name_val = CG_NAME.get(sw_key, "Blender")      # e.g. "3ds Max"
-        cg_id_val   = CG_ID.get(sw_key, "2007")           # e.g. "2001"
-        scene_name  = os.path.splitext(filename)[0]
-        frames_str  = f"{frames}-{frames}[1]" if "-" not in str(frames) else frames
-        server_path = f"C:/users/{project_name}/{filename}"
+function handleDragLeave(e) {
+  document.getElementById('uploadZone').classList.remove('dragover');
+}
 
-        task_data = {
-            "software_config": {
-                "cg_name":    cg_name_val,
-                "cg_version": software_version,
-                "plugins":    {},
-            },
-            "task_info": {
-                "task_id":                str(task_id),
-                "cg_id":                  cg_id_val,
-                "frames_per_task":        "1",
-                "pre_frames":             "100",
-                "job_stop_time":          "259200",
-                "task_stop_time":         "0",
-                "time_out":               "43200",
-                "is_layer_rendering":     "1",
-                "is_distribute_render":   "0",
-                "distribute_render_node": "3",
-                "input_cg_file":          server_path,
-                "input_project_path":     "",
-                "project_name":           project_name,
-                "ram":                    "64",
-                "os_name":                "1",
-                "render_layer_type":      "0",
-                "platform":               PLATFORM,
-                "channel":                "4",
-                "tiles":                  "1",
-                "tiles_type":             "block",
-                "is_picture":             "0",
-                "stop_after_test":        "1",
-            },
-            "hardware_config": {
-                "model":  ["28C", "24Cplus"],
-                "ram":    "64GB",
-                "gpuNum": None,
-            },
-            "scene_info_render": {
-                "common": {
-                    "frames":        frames_str,
-                    "Render_Format": "PNG",
-                    "scene_name":    [scene_name],
-                    "width":         "1920",
-                    "height":        "1080",
-                    "camera_name":   "Camera",
-                    "Output_path":   "/tmp/",
-                }
-            },
-            "scene_info": {
-                "common": {
-                    "frames":        frames_str,
-                    "Render_Format": "PNG",
-                    "scene_name":    [scene_name],
-                    "width":         "1920",
-                    "height":        "1080",
-                    "camera_name":   "Camera",
-                    "Output_path":   "/tmp/",
-                }
-            },
-        }
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('uploadZone').classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) setFile(file);
+}
 
-        task_json = os.path.join(tmp_dir, "task.json")
-        with open(task_json, "w") as f:
-            json.dump(task_data, f, indent=2)
+function setFile(file) {
+  selectedFile = file;
+  document.getElementById('selectedFileName').textContent = file.name;
+  document.getElementById('selectedFileSize').textContent = (file.size / 1024 / 1024).toFixed(2) + ' MB';
+  document.getElementById('fileSelectedInfo').classList.add('show');
+  const ext = file.name.split('.').pop().toLowerCase();
+  const map = { ma: 'maya', mb: 'maya', hip: 'houdini', hiplc: 'houdini', hipnc: 'houdini', blend: 'blender', max: '3dsmax', c4d: 'cinema4d', project: 'clarisse' };
+  if (map[ext]) {
+    document.querySelectorAll('.sw-option').forEach(opt => {
+      const name = opt.querySelector('.sw-option-name').textContent.toLowerCase().replace(/\s/g,'');
+      const extText = opt.querySelector('.sw-option-ext').textContent;
+      if (name === map[ext] || extText.includes('.' + ext)) {
+        selectSoftware(map[ext], opt);
+      }
+    });
+  }
+}
 
-        upload_json = os.path.join(tmp_dir, "upload.json")
-        upload_data = {
-            "asset": [{"local": file_path, "server": server_path}]
-        }
-        with open(upload_json, "w") as f:
-            json.dump(upload_data, f, indent=2)
+function selectSoftware(sw, el) {
+  selectedSoftware = sw;
+  document.querySelectorAll('.sw-option').forEach(o => o.classList.remove('selected'));
+  el.classList.add('selected');
+}
 
-        from rayvision_sync.upload import RayvisionUpload
-        upload = RayvisionUpload(api)
-        upload.upload_config(str(task_id), [task_json])
-        upload.upload_asset(upload_json, engine_type="aspera")
+// ─── ANALYZE ───
+async function analyzeScene() {
+  if (!selectedFile) { showToast('Please select a file first', 'error'); return; }
+  if (!selectedSoftware) { showToast('Please select software', 'error'); return; }
+  const projectName = document.getElementById('projectName').value || 'MyProject';
+  const softwareVersion = document.getElementById('softwareVersion').value || '2023';
+  const frames = document.getElementById('frameRange').value || '1-10[1]';
+  showLoading('Analyzing scene...', 'Detecting assets, plugins and dependencies');
+  const formData = new FormData();
+  formData.append('file', selectedFile);
+  formData.append('software', selectedSoftware);
+  formData.append('software_version', softwareVersion);
+  formData.append('project_name', projectName);
+  formData.append('frames', frames);
+  try {
+    const r = await fetch(API + '/api/analyze', { method: 'POST', body: formData });
+    analysisResult = await r.json();
+    hideLoading();
+    showAnalysisResults(analysisResult);
+  } catch (err) {
+    hideLoading();
+    showToast('Error connecting to backend', 'error');
+  }
+}
 
-        api.task.submit_task(task_id)
-        job_status[task_id] = "submitted"
+function showAnalysisResults(data) {
+  document.getElementById('formStep1').style.display = 'none';
+  document.getElementById('formStep3').style.display = 'block';
+  document.getElementById('step1').classList.add('done');
+  document.getElementById('step2').classList.add('done');
+  document.getElementById('step3').classList.add('active');
+  document.getElementById('analysisFileName').textContent = data.file || selectedFile?.name;
+  document.getElementById('resSoftware').textContent = (data.software || '—').toUpperCase();
+  document.getElementById('resSize').textContent = (data.file_size_mb || 0) + ' MB';
+  document.getElementById('resFrames').textContent = data.frames || '—';
+  document.getElementById('resProject').textContent = data.project_name || '—';
+  document.getElementById('resVersion').textContent = data.software_version || '—';
+  if (data.status === 'error') {
+    document.getElementById('resStatus').textContent = 'Error';
+    document.getElementById('resStatus').style.color = 'var(--error)';
+    document.getElementById('analysisStatus').textContent = '⚠️ Analysis Error';
+  }
+  const tipsList = document.getElementById('tipsList');
+  if (data.tips && data.tips.length > 0) {
+    tipsList.innerHTML = '<div class="tips-title">Scene Analysis Notes</div>';
+    data.tips.forEach(tip => {
+      const t = typeof tip === 'string' ? { type: 'warn', message: tip } : tip;
+      const cls = t.type === 'ok' ? 'tip-ok' : t.type === 'error' ? 'tip-error' : 'tip-warn';
+      const icon = t.type === 'ok' ? '✓' : t.type === 'error' ? '✗' : '⚠';
+      tipsList.innerHTML += `<div class="tip-item ${cls}">${icon} ${t.message || JSON.stringify(t)}</div>`;
+    });
+  }
+  showToast('Analysis complete!', 'success');
+}
 
-    except Exception as e:
-        job_status[task_id] = f"error:{str(e)}"
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+// ─── SUBMIT JOB ───
+async function submitJob() {
+  showLoading('Submitting job...', 'Uploading assets to Fox Renderfarm');
+  try {
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    formData.append('software', selectedSoftware);
+    formData.append('project_name', document.getElementById('projectName').value || 'MyProject');
+    formData.append('frames', document.getElementById('frameRange').value || '1-10[1]');
+    formData.append('software_version', document.getElementById('softwareVersion').value || '2023');
+    const r = await fetch(API + '/api/submit', { method: 'POST', body: formData });
+    const data = await r.json();
+    hideLoading();
+    document.getElementById('submittedTaskId').textContent = data.task_id || '—';
+    showSubmittedStep();
+    showToast('Job submitted successfully!', 'success');
+  } catch {
+    hideLoading();
+    showToast('Error submitting job', 'error');
+  }
+}
 
+function showSubmittedStep() {
+  document.getElementById('formStep3').style.display = 'none';
+  document.getElementById('formStep4').style.display = 'block';
+  document.getElementById('step3').classList.add('done');
+  document.getElementById('step4').classList.add('active');
+}
 
-# ─────────────────────────────────────────────
-# BACKGROUND: POLL FOX → AUTO-DOWNLOAD → SUPABASE
-# ─────────────────────────────────────────────
-def poll_and_download(task_id, project_name):
-    api = get_api()
-    while True:
-        try:
-            result   = api.query.get_task_list(page_num=1, page_size=50)
-            raw_jobs = result.get("items", []) if isinstance(result, dict) else result
-            job      = next((j for j in raw_jobs if j.get("id") == task_id), None)
+// ─── LOAD JOBS (with auto-refresh) ───
+async function loadJobs() {
+  try {
+    const r = await fetch(API + '/api/jobs');
+    const data = await r.json();
+    const jobs = data.jobs || [];
+    renderJobsTable(jobs);
+    updateMetrics(jobs);
+    const now = new Date();
+    document.getElementById('lastUpdated').textContent =
+      'Updated ' + now.toLocaleTimeString();
+  } catch {
+    renderJobsTable([]);
+  }
+}
 
-            if not job:
-                time.sleep(60)
-                continue
+function renderJobsTable(jobs) {
+  const tbody = document.getElementById('jobsTableBody');
+  if (!jobs || jobs.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:40px;font-size:14px;">
+      No jobs yet — <a href="#" onclick="showPage('submit')" style="color:var(--accent)">submit your first render</a>
+    </td></tr>`;
+    return;
+  }
+  tbody.innerHTML = jobs.map(job => {
+    const status = (job.task_status || 'queued').toLowerCase();
+    const statusLabels = {
+      rendering: 'RENDERING', done: 'DONE', waiting: 'WAITING',
+      queued: 'QUEUED', error: 'ERROR', stopped: 'STOPPED', submitted: 'SUBMITTED'
+    };
+    const cls = ['rendering','done','waiting','queued','error','stopped'].includes(status) ? status : 'queued';
+    const label = statusLabels[status] || status.toUpperCase();
+    const progress = job.render_percent || (status === 'done' ? 100 : 0);
+    return `<tr>
+      <td style="font-family:var(--mono);color:var(--accent)">#${job.id || job.task_id}</td>
+      <td style="font-weight:600">${job.project_name || '—'}</td>
+      <td>${job.software || '—'}</td>
+      <td style="font-family:var(--mono)">${job.frames || '—'}</td>
+      <td><span class="status-badge status-${cls}">${label}</span></td>
+      <td>
+        <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
+        <div style="font-size:11px;color:var(--text3);margin-top:4px;font-family:var(--mono)">${progress}%</div>
+      </td>
+      <td>
+        ${status === 'done' ? `<button class="action-btn" onclick="downloadJob(${job.id})">↓ Download</button>` : ''}
+        ${['rendering','waiting','submitted'].includes(status) ? `<button class="action-btn danger" onclick="stopJob(${job.id})">⏹ Stop</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+}
 
-            status_code = job.get("taskStatus", 0)
+function updateMetrics(jobs) {
+  const active   = jobs.filter(j => ['rendering','started'].includes((j.task_status||'').toLowerCase())).length;
+  const waiting  = jobs.filter(j => ['waiting','queued','submitted'].includes((j.task_status||'').toLowerCase())).length;
+  const done     = jobs.filter(j => ['done','system_done'].includes((j.task_status||'').toLowerCase())).length;
+  document.getElementById('metricActive').textContent  = active;
+  document.getElementById('metricWaiting').textContent = waiting;
+  document.getElementById('metricDone').textContent    = done;
+  document.getElementById('metricTotal').textContent   = jobs.length;
+}
 
-            if status_code in [70, 80]:  # completed
-                from rayvision_sync.download import RayvisionDownload
-                download     = RayvisionDownload(api)
-                download_path = f"/tmp/renders/{task_id}"
-                os.makedirs(download_path, exist_ok=True)
-                download.download(task_id_list=[task_id], local_path=download_path, print_log=False)
+async function stopJob(id) {
+  try {
+    await fetch(`${API}/api/jobs/${id}/stop`, { method: 'POST' });
+    showToast('Job stopped', 'success');
+    loadJobs();
+  } catch { showToast('Error stopping job', 'error'); }
+}
 
-                for root, dirs, files in os.walk(download_path):
-                    for file in files:
-                        fp           = os.path.join(root, file)
-                        supabase_path = f"outputs/{task_id}/{file}"
-                        url          = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{supabase_path}"
-                        headers      = {
-                            "Authorization": f"Bearer {SUPABASE_KEY}",
-                            "Content-Type":  "application/octet-stream",
-                        }
-                        with open(fp, "rb") as f:
-                            requests.put(url, headers=headers, data=f)
+async function downloadJob(id) {
+  window.open(`${API}/api/jobs/${id}/download`, '_blank');
+  showToast('Download started!', 'success');
+}
 
-                job_status[task_id] = "done"
-                shutil.rmtree(download_path, ignore_errors=True)
-                break
+// ─── UTILS ───
+function resetForm() {
+  selectedFile = null; selectedSoftware = null; analysisResult = null;
+  document.getElementById('formStep1').style.display = 'block';
+  document.getElementById('formStep3').style.display = 'none';
+  document.getElementById('formStep4').style.display = 'none';
+  document.getElementById('fileSelectedInfo').classList.remove('show');
+  document.getElementById('fileInput').value = '';
+  document.querySelectorAll('.sw-option').forEach(o => o.classList.remove('selected'));
+  document.querySelectorAll('.step').forEach(s => s.classList.remove('active','done'));
+  document.getElementById('step1').classList.add('active');
+}
 
-            elif status_code in [50, 60]:  # error
-                job_status[task_id] = "render_error"
-                break
+function showLoading(text, sub) {
+  document.getElementById('loadingText').textContent = text;
+  document.getElementById('loadingSub').textContent = sub;
+  document.getElementById('loadingOverlay').classList.add('show');
+}
 
-        except Exception as e:
-            job_status[task_id] = f"poll_error:{str(e)}"
-            break
+function hideLoading() {
+  document.getElementById('loadingOverlay').classList.remove('show');
+}
 
-        time.sleep(60)
+function showToast(msg, type = 'success') {
+  const toast = document.getElementById('toast');
+  document.getElementById('toastIcon').textContent = type === 'success' ? '✅' : '❌';
+  document.getElementById('toastMsg').textContent = msg;
+  toast.className = `toast ${type} show`;
+  setTimeout(() => toast.classList.remove('show'), 3500);
+}
 
+// ─── INIT ───
+checkAPI();
+setInterval(checkAPI, 30000);
 
-# ─────────────────────────────────────────────
-# ROUTES
-# ─────────────────────────────────────────────
-@app.get("/")
-def root():
-    return {"status": "RenderRayCloud API running"}
+// Start auto-refresh when dashboard is first shown
+const dashboardPage = document.getElementById('page-dashboard');
+const observer = new MutationObserver(() => {
+  if (dashboardPage.classList.contains('active')) {
+    startAutoRefresh();
+  } else {
+    stopAutoRefresh();
+  }
+});
+observer.observe(dashboardPage, { attributes: true, attributeFilter: ['class'] });
+</script>
+</body>
+</html>
 
-
-@app.get("/api/health")
-def health():
-    get_api()
-    return {"status": "connected", "platform": PLATFORM}
-
-
-@app.post("/api/analyze")
-async def analyze_scene(
-    file: UploadFile = File(...),
-    software: str = Form(...),
-    software_version: str = Form(""),
-    project_name: str = Form(...),
-    frames: str = Form("1"),
-):
-    tmp_dir   = tempfile.mkdtemp()
-    file_path = os.path.join(tmp_dir, file.filename)
-    file_size = 0
-
-    with open(file_path, "wb") as f:
-        while chunk := await file.read(1024 * 1024):
-            f.write(chunk)
-            file_size += len(chunk)
-
-    file_size_mb = round(file_size / (1024 * 1024), 2)
-    detected_version, detected_software = detect_software_version(file_path, software)
-    final_version  = software_version or detected_version or "3.6"
-    final_software = detected_software or software
-    sw_key         = get_software_key(file.filename)
-
-    shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    tips = [{"type": "ok", "message": "Scene file ready for rendering"}]
-    if detected_version:
-        tips.append({"type": "ok", "message": f"Auto-detected version: {detected_version}"})
-
-    return {
-        "status":           "analyzed",
-        "file":             file.filename,
-        "software":         CG_NAME.get(sw_key, final_software),
-        "software_key":     sw_key,
-        "cg_id":            CG_ID.get(sw_key, "2007"),
-        "software_version": final_version,
-        "project_name":     project_name,
-        "frames":           frames,
-        "file_size_mb":     file_size_mb,
-        "detected_version": detected_version,
-        "tips":             tips,
-    }
-
-
-@app.post("/api/submit")
-async def submit(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    software: str = Form(...),
-    project_name: str = Form(...),
-    frames: str = Form("1"),
-    software_version: str = Form("3.6"),
-):
-    tmp_dir   = tempfile.mkdtemp()
-    file_path = os.path.join(tmp_dir, file.filename)
-
-    with open(file_path, "wb") as f:
-        while chunk := await file.read(1024 * 1024):
-            f.write(chunk)
-
-    try:
-        supabase_url = upload_to_supabase(file_path, file.filename)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase upload failed: {str(e)}")
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    api    = get_api()
-    result = api.task.create_task(count=1)
-
-    if isinstance(result, dict):
-        task_id = result.get("taskIdList", [None])[0]
-    elif isinstance(result, list):
-        task_id = result[0]
-    else:
-        task_id = result
-
-    if not task_id or task_id == 0:
-        raise HTTPException(status_code=500, detail=f"Invalid task_id from Fox: {result}")
-
-    job_status[task_id] = "uploading"
-    background_tasks.add_task(
-        do_upload_and_submit,
-        supabase_url, file.filename, task_id, frames, software_version, project_name,
-    )
-    threading.Thread(target=poll_and_download, args=(task_id, project_name), daemon=True).start()
-
-    return {"status": "uploading", "task_id": task_id, "supabase_url": supabase_url}
-
-
-@app.get("/api/job-status/{task_id}")
-def get_job_status(task_id: int):
-    return {"task_id": task_id, "status": job_status.get(task_id, "unknown")}
-
-
-@app.get("/api/jobs")
-def get_jobs():
-    STATUS_MAP = {
-        0: "waiting", 5: "waiting", 10: "done", 20: "done",
-        23: "done", 25: "done", 30: "rendering", 35: "rendering",
-        40: "stopped", 45: "done", 50: "error", 60: "error",
-        70: "done", 80: "done",
-    }
-    try:
-        api      = get_api()
-        result   = api.query.get_task_list(page_num=1, page_size=20)
-        raw_jobs = result.get("items", []) if isinstance(result, dict) else result
-        jobs = []
-        for j in raw_jobs:
-            sc = j.get("taskStatus", 0)
-            jobs.append({
-                "id":             j.get("id"),
-                "task_id":        j.get("id"),
-                "project_name":   j.get("projectName") or j.get("sceneName", "--"),
-                "software":       j.get("cgName") or "Blender",
-                "frames":         j.get("framesRange") or str(j.get("totalFrames", "--")),
-                "task_status":    STATUS_MAP.get(sc, "queued"),
-                "render_percent": 100 if STATUS_MAP.get(sc) == "done" else (j.get("renderingRatio") or j.get("progress") or 0),
-            })
-        return {"status": "ok", "jobs": jobs}
-    except Exception as e:
-        return {"status": "ok", "jobs": [], "error": str(e)}
-
-
-@app.get("/api/jobs/raw")
-def get_jobs_raw():
-    try:
-        api    = get_api()
-        result = api.query.get_task_list(page_num=1, page_size=5)
-        return {"raw": result}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@app.get("/api/jobs/{task_id}/download")
-def download_job(task_id: int):
-    try:
-        api = get_api()
-        from rayvision_sync.download import RayvisionDownload
-        download      = RayvisionDownload(api)
-        download_path = f"/tmp/renders/{task_id}"
-        os.makedirs(download_path, exist_ok=True)
-        download.download(task_id_list=[task_id], local_path=download_path, print_log=False)
-
-        zip_path = f"/tmp/renders/task_{task_id}.zip"
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for root, dirs, files in os.walk(download_path):
-                for file in files:
-                    fp = os.path.join(root, file)
-                    zf.write(fp, os.path.relpath(fp, download_path))
-
-        return FileResponse(zip_path, media_type="application/zip", filename=f"render_{task_id}.zip")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/jobs/{task_id}/stop")
-def stop_job(task_id: int):
-    try:
-        api = get_api()
-        api.task.stop_task(task_id)
-        return {"status": "stopped"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/jobs/{task_id}/delete")
-def delete_job(task_id: int):
-    try:
-        api = get_api()
-        api.task.delete_task(task_id)
-        return {"status": "deleted"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/jobs/delete-all")
-def delete_all_jobs():
-    try:
-        api      = get_api()
-        result   = api.query.get_task_list(page_num=1, page_size=50)
-        raw_jobs = result.get("items", []) if isinstance(result, dict) else result
-        ids      = [j.get("id") for j in raw_jobs if j.get("id")]
-        for tid in ids:
-            try:
-                api.task.abort_task(tid)
-            except Exception:
-                pass
-        return {"status": "deleted", "count": len(ids)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/task-methods")
-def task_methods():
-    api = get_api()
-    return {"methods": [m for m in dir(api.task) if not m.startswith("_")]}
