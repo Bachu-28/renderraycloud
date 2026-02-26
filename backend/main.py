@@ -55,7 +55,7 @@ def do_upload_and_submit(supabase_url, filename, task_id, frames, software_versi
 
         scene_name = os.path.splitext(filename)[0]
         frames_str = f"{frames}-{frames}[1]" if "-" not in str(frames) else frames
-        server_path = file_path
+        server_path = "C:/users/" + project_name + "/" + os.path.basename(file_path)
 
         task_data = {
             "software_config": {
@@ -116,7 +116,7 @@ def do_upload_and_submit(supabase_url, filename, task_id, frames, software_versi
             json.dump(task_data, f)
 
         upload_json = os.path.join(tmp_dir, "upload.json")
-        upload_data = {"asset": [{"local": file_path, "server": filename}]}
+        upload_data = {"asset": [{"local": file_path, "server": "C:/users/" + project_name + "/" + filename}]}
         with open(upload_json, "w") as f:
             json.dump(upload_data, f)
 
