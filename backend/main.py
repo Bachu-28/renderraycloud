@@ -295,7 +295,7 @@ def poll_and_download(task_id, project_name):
                         with open(fp, "rb") as f:
                             requests.put(url, headers=headers, data=f)
                         output_urls.append(f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{supabase_path}")
-                job_status[task_id] = f"done:{','.join(output_urls)}"
+                job_status[task_id] = "done"
                 shutil.rmtree(download_path, ignore_errors=True)
                 break
             elif status_code in [50, 60]:  # error
